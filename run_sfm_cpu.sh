@@ -1,0 +1,13 @@
+#!/bin/bash
+#SBATCH -A berzelius-2025-319 
+#SBATCH -J sfm_hloc               
+#SBATCH -t 01-00:00:00               
+#SBATCH -o sfm_output_%j.log
+
+#SBATCH -p berzelius-cpu                    
+#SBATCH --nodes=1                    
+#SBATCH --cpus-per-task=64        
+#SBATCH --mem=400G 
+echo "Running in CPU mode on $HOSTNAME“
+
+python triangular_hloc.py
