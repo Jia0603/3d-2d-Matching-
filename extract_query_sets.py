@@ -1,25 +1,20 @@
-import numpy as np
 from hloc.utils import read_write_model as rw
-import os
 import random
 from pathlib import Path
 
 random.seed(42)
 def extract_query_sets(scene: str, 
-                       sfm_model_dir="/proj/vlarsson/datasets/megadepth/Undistorted_SfM", 
-                       output_dir="/proj/vlarsson/outputs/query_sets",
+                       sfm_model_dir: Path, 
+                       output_dir: Path,
                        sample_ratio=0.001, 
                        query_image_ratio=0.2,
                        ):
     
     print(f"Processing scene: {scene}")
 
-    sfm_model_path = Path(sfm_model_dir) / scene / "sparse"
-    # print(f"Reading SfM model from: {sfm_model_path}")
-    # print(f"Sample ratio: {sample_ratio}")
-    # print(f"Query image ratio: {query_image_ratio}")
+    sfm_model_path = sfm_model_dir / scene / "sparse"
 
-    output_path = Path(output_dir) / scene
+    output_path = output_dir / scene
     output_path.mkdir(parents=True, exist_ok=True)
 
     # read the SfM model
@@ -31,7 +26,6 @@ def extract_query_sets(scene: str,
     print(f"Original 3D points: {total_points}; Sampled 3D points: {num_samples}")
 
     # collect image names that observe the sampled 3D points
-    query_image_names = set()
     oberved_image_ids = set()
     for pid in sampled_ids:
         oberved_image_ids.update(points3D[pid].image_ids)
@@ -70,12 +64,13 @@ def extract_query_sets(scene: str,
 if __name__ == "__main__":
 
     root = Path("/proj/vlarsson/datasets/megadepth/Undistorted_SfM")
+    output_dir = Path("/proj/vlarsson/outputs")
     scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
 
-    for scene in scene_names[4:5]:  # change the slice to process more scenes
+    for scene in scene_names[12:13]:  # change the slice to process more scenes
         extract_query_sets(scene,
-                           sfm_model_dir="/proj/vlarsson/datasets/megadepth/Undistorted_SfM",
-                           output_dir="/proj/vlarsson/outputs/query_sets/",
+                           root,
+                           output_dir / "query_sets",
                            sample_ratio=0.001,
                            query_image_ratio=0.2)
         

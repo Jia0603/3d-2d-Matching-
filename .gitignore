@@ -1,9 +1,12 @@
 outputs/
 # 忽略所有的 SfM 输出日志文件
-sfm_output_*.log
+*.log
 
 # 忽略 SfM_htmls 文件夹及其内容
 SfM_htmls/
 
 # ignore query sets and its contents
 query_sets/
+
+# ignore all the log files
+log_file/
