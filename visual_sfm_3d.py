@@ -3,7 +3,7 @@ from hloc.utils import viz_3d
 from pathlib import Path
 
 scene = "0000" # specify the scene number here
-sfm_dir = Path(f"/proj/vlarsson/outputs/sfm/{scene}/sfm_superpoint+lightglue")
+sfm_dir = Path(f"/proj/vlarsson/outputs/sfm/{scene}_0.1_0.5/sfm_superpoint+lightglue")
 html_dir =Path("/home/x_jiagu/degree_project/SfM_htmls")
 
 if not sfm_dir.exists():
@@ -23,6 +23,6 @@ fig = viz_3d.init_figure()
 viz_3d.plot_reconstruction(fig, reconstruction, color='rgba(255,0,0,0.5)', name=f"triangulation of scene {scene}")
 # fig.show()
 
-html_path = html_dir / f"viz_{scene}.html"
+html_path = html_dir / f"viz_{scene}_0.1_0.5.html"
 fig.write_html(str(html_path))
 print(f"HTML for 3D visualization saved to {html_path}.")

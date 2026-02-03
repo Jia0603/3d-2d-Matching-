@@ -27,9 +27,9 @@ def extract_pairs_to_list(npz_path, overlap_thres=[0.1, 0.5]):
 
 
 root = Path("/proj/vlarsson/datasets/megadepth/Undistorted_SfM")
-outputs = Path("./outputs/sfm/")
+outputs = Path("/proj/vlarsson/outputs/sfm/")
 
-overlap_thres = [0.1, 0.7]  # define your overlap threshold range here
+overlap_thres = [0.4, 0.9]  # define your overlap threshold range here
 
 feature_conf = {
     'output': 'feats-superpoint-n2048',
@@ -45,7 +45,7 @@ feature_conf = {
     },
 }
 
-retrieval_conf = extract_features.confs["netvlad"]
+# retrieval_conf = extract_features.confs["netvlad"]
 matcher_conf = match_features.confs["superpoint+lightglue"]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -55,12 +55,12 @@ scene_names = sorted([
     if p.is_dir()
 ])
 
-for scene in scene_names[:1]: # change the slice to process more scenes
+for scene in scene_names[4:5]: # change the slice to process more scenes
     print(f"Start processing scene: {scene}...")
 
     images_path = root / scene / "images"
 
-    output_dir = outputs / scene
+    output_dir = outputs / f"{scene}_0.4_0.9"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if device.type == 'cuda':

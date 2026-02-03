@@ -4,3 +4,6 @@ sfm_output_*.log
 
 # 忽略 SfM_htmls 文件夹及其内容
 SfM_htmls/
+
+# ignore query sets and its contents
+query_sets/
