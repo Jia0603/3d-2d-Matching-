@@ -10,4 +10,4 @@
 #SBATCH --mem=400G 
 echo "Running in CPU mode on $HOSTNAME"
 
-python triangulation_gpu_steps.py
+python triangulation_cpu_steps.py
