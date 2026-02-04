@@ -38,7 +38,7 @@ scene_names = sorted([
     if p.is_dir()
 ])
 
-for scene in scene_names[:1]: # change the slice to process more scenes
+for scene in scene_names[1:12]: # change the slice to process more scenes
     print(f"Start processing scene: {scene}...")
 
     images_path = root / scene / "images"
