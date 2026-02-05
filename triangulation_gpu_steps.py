@@ -72,7 +72,7 @@ def process_scene(scene): # change the slice to process more scenes
     print("Using GPU for processing feature extraction and matching.")
     sfm_pairs = output_dir / "pairs-covisibility.txt"
 
-    # # Step 0: Get image pairs from dataset info
+    # Step 0: Get image pairs from dataset info
     pair_load = extract_pairs_to_list(outputs.parent / 'query_sets' / scene / 'query_image_names.txt',
                                            root.parent / 'scene_info' / f'{scene}.npz', 
                                            overlap_thres)

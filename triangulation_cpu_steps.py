@@ -74,4 +74,4 @@ for scene in scene_names[1:12]: # change the slice to process more scenes
     print(f"Secene {scene} 3D triangulation on CPU completed.")
 
     # Step 4: Visualization
-    visualize_sfm_3d(sfm_dir, scene, html_save_dir)
+    visualize_sfm_3d(sfm_dir, scene, html_save_dir, True)
