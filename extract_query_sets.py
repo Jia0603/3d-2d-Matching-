@@ -41,22 +41,52 @@ def extract_query_sets(scene: str,
 
     print(f"Query images collected: {len(query_image_ids)}")
 
-    query_infos = []
+    query_infos = {}
     for img_id in query_image_ids:
         image = images[img_id]
         camera = cameras[image.camera_id]
-        camera_info = f"{camera.id} {camera.model} {camera.width} {camera.height} " + \
-                      " ".join(map(str, camera.params))
-        query_infos.append((image.name, camera_info))
+        intrinsics = {
+            "camera_id": camera.id,
+            "model": camera.model,
+            "width": camera.width,
+            "height": camera.height,
+            "params": camera.params.tolist()
+        }
+        pose = {
+            "qvec": image.qvec.tolist(),
+            "tvec": image.tvec.tolist()
+        }
+
+        query_infos[image.name] = {
+            "intrinsics" : intrinsics,
+            "pose" : pose
+        }
 
     # write query image names and camera infos to files
     query_name_path = output_path / "query_image_names.txt"
     query_camera_path = output_path / "query_image_cameras.txt"
 
     with open(query_name_path, "w") as f_n, open(query_camera_path, "w") as f_c:
-        for name, camera_info in query_infos:
+        for name, info in query_infos.items():
+
             f_n.write(f"{name}\n")
-            f_c.write(f"{name} {camera_info}\n")
+
+            qvec = info["pose"]["qvec"]
+            tvec = info["pose"]["tvec"]
+            intr = info["intrinsics"]
+
+            line = (
+                f"{name} "
+                f"{' '.join(map(str, qvec))} "
+                f"{' '.join(map(str, tvec))} "
+                f"{intr['camera_id']} "
+                f"{intr['model']} "
+                f"{intr['width']} "
+                f"{intr['height']} "
+                f"{' '.join(map(str, intr['params']))}"
+            )
+
+            f_c.write(line + "\n")
 
     print(f"Query image names written to: {query_name_path}")
     print(f"Query image cameras written to: {query_camera_path}")
@@ -67,7 +97,7 @@ if __name__ == "__main__":
     output_dir = Path("/proj/vlarsson/outputs")
     scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
 
-    for scene in scene_names[12:13]:  # change the slice to process more scenes
+    for scene in scene_names[:13]:  # change the slice to process more scenes
         extract_query_sets(scene,
                            root,
                            output_dir / "query_sets",

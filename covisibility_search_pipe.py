@@ -3,24 +3,7 @@ from hloc import extract_features, pairs_from_retrieval
 from hloc.utils import read_write_model as rw
 from pathlib import Path
 import pickle
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-
-def qvec2rotmat(qvec):
-    """Convert quaternion vector to rotation matrix.
-    Args:
-        qvec: Quaternion vector (4,).
-    Returns:
-        Rotation matrix (3, 3).
-    """
-    w, x, y, z = qvec
-    R = np.array([
-        [1 - 2 * (y**2 + z**2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x**2 + z**2), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x**2 + y**2)]
-    ])
-    return R
-
+from utils import map_img_to_points3d, map_img_name_to_id, qvec2rotmat
 
 def most_similar_pair(reference_dir, query_dir, output_dir):
     '''
@@ -100,7 +83,8 @@ def covisibility_search(
     images: dict,
     points3D: dict,
     camera_pos: np.ndarray = np.array([0,0,0]),
-    pruning: float = 0.5
+    pruning: float = 0.5,
+    max_points: int = 10000,
 ) -> tuple:
     """
     Conducts covisibility search through bipartite PR.
@@ -142,32 +126,30 @@ def covisibility_search(
                 max_distance=distance
             unique_points.update(points_3d_image)
             valid_images.add(ind)
+            if len(unique_points) > max_points:
+                # Limit the number of unique points to 10000 for efficiency
+                unique_points=set(list(unique_points)[:max_points])
+                break
        
     unique_points=np.array(list(unique_points))    
     unique_points=unique_points[np.where(unique_points!=-1)] # Remove points not in sfm model.
 
     return valid_images, unique_points, max_distance
 
-def map_img_to_points3d(image_name: str, images_dict) -> np.ndarray:
-    '''
-    Maps an image name to its corresponding 3D point IDs in the SfM model.'''
-    for img in images_dict.values():
-        if img.name == image_name:
-            return img.point3D_ids[img.point3D_ids != -1]
-    raise ValueError(f"{image_name} not found.")
 
 
 if __name__ == "__main__":
 
     root = Path("/proj/vlarsson/datasets/megadepth/Undistorted_SfM")
-    outputs = Path("/proj/vlarsson/outputs/sfm/")
+    # outputs = Path("/proj/vlarsson/outputs/sfm/")
+    outputs = Path("/proj/vlarsson/outputs/midterm_results/")
     scene_names = sorted([
         p.name
         for p in root.iterdir()
         if p.is_dir()
     ])
 
-    for scene in scene_names[:1]: # Change the slice to process more scenes
+    for scene in scene_names[1:13]: # Change the slice to process more scenes
         print(f"Start processing covisibility search for scene: {scene}...")
         images_path = root / scene / "images" # Contains all .jpg images
         output_dir = outputs / scene
@@ -184,14 +166,13 @@ if __name__ == "__main__":
         _, images, point3D = rw.read_model(
             output_dir.parent.parent / "sfm" / output_dir.name / "sfm_superpoint+lightglue", ext=".bin"
             )
-        name_to_image = {img.name: img for img in images.values()}
-
+        
         # Conduct covisibility search for each matched pair
         covisibility_results = {}
         for query_image, matched_image in matched_pairs_dict.items():
             points3d_level = map_img_to_points3d(matched_image, images)
 
-            img = name_to_image[matched_image]
+            img = images[map_img_name_to_id(matched_image, images)]
             R, t = qvec2rotmat(img.qvec), img.tvec
             camera_center = -R.T @ t   
 
@@ -200,7 +181,8 @@ if __name__ == "__main__":
                 images=images,
                 points3D=point3D,
                 camera_pos=camera_center,
-                pruning=0.5
+                pruning=0.4,
+                max_points=10000
             )
             print(f"Query Image: {query_image}, Matched Image: {matched_image}")
             print(f"  Unique Images Found: {len(unique_images)}")
