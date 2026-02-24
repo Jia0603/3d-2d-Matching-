@@ -4,27 +4,50 @@ import warnings
 import h5py
 from hloc.utils import read_write_model as rw
 from hloc import triangulation
+import numpy as np
 import shutil
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 def filter_reference_model(reference_model, output_model, valid_images):
     cameras, images, points3D = rw.read_model(reference_model)
+    assert reference_model != output_model
 
-    images_filtered = {
-        image_id: img
-        for image_id, img in images.items()
-        if img.name in valid_images
-    }
+    # images_filtered = {
+    #     image_id: img
+    #     for image_id, img in images.items()
+    #     if img.name in valid_images
+    # }
 
-    valid_point3D_ids = set()
-    for img in images_filtered.values():
-        valid_point3D_ids.update(img.point3D_ids)
+    # valid_point3D_ids = set()
+    # for img in images_filtered.values():
+    #     valid_point3D_ids.update(img.point3D_ids)
 
-    points3D_filtered = {
-        pid: p
-        for pid, p in points3D.items()
-        if pid in valid_point3D_ids
-    }
+    # points3D_filtered = {
+    #     pid: p
+    #     for pid, p in points3D.items()
+    #     if pid in valid_point3D_ids
+    # }
+
+    images_filtered = {}
+
+    for image_id, img in images.items():
+        if img.name not in valid_images:
+            continue
+        
+        new_point3D_ids = np.full_like(img.point3D_ids, -1)
+
+        new_img = type(img)(
+            id=img.id,
+            qvec=img.qvec,
+            tvec=img.tvec,
+            camera_id=img.camera_id,
+            name=img.name,
+            xys=img.xys,
+            point3D_ids=new_point3D_ids
+        )
+        images_filtered[image_id] = new_img
+
+    points3D_filtered = {}
 
     rw.write_model(cameras, images_filtered, points3D_filtered, output_model, ext='.bin')
 
@@ -38,7 +61,7 @@ scene_names = sorted([
     if p.is_dir()
 ])
 
-for scene in scene_names[1:12]: # change the slice to process more scenes
+for scene in scene_names[:12]: # change the slice to process more scenes
     print(f"Start processing scene: {scene}...")
 
     images_path = root / scene / "images"

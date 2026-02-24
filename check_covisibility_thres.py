@@ -50,9 +50,9 @@ scene_names = sorted([
     if p.is_dir()
 ])
 
-thresholds = [[0.3, 0.9], [0.4, 0.9], [0.5, 0.9]]
+thresholds = [[0.3, 0.95]]
 
-for scene in scene_names[5:10]:
+for scene in scene_names[:5]:
     ref_path = Path(f"/proj/vlarsson/datasets/megadepth/Undistorted_SfM/{scene}/sparse")
     for thres in thresholds:
         print("---------------------------------------------------")
