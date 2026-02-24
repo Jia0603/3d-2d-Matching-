@@ -112,24 +112,66 @@ def covisibility_search(
             img_ids = img_ids[img_ids != -1]
             unique_images.update(img_ids)
 
-    # Ensure we are not including images with too small overlap
+    # # ORIGINAL algorithm
+    # # Ensure we are not including images with too small overlap
+    # valid_images = set()
+    # for ind in unique_images:
+    #     img=images[ind]
+    #     points_3d_image=img.point3D_ids[np.where(img.point3D_ids!=-1)]
+    #     intersection=set(points_3d_image).intersection(points3d_level)
+    #     if len(intersection)/len(points3d_level) > pruning:
+    #         R, t= qvec2rotmat(img.qvec), img.tvec
+    #         C=-R.T@t
+    #         distance=np.linalg.norm(np.array(camera_pos) - np.array(C))
+    #         if distance>max_distance:
+    #             max_distance=distance
+    #         unique_points.update(points_3d_image)
+    #         valid_images.add(ind)
+    #         if len(unique_points) > max_points:
+    #             # Limit the number of unique points to 10000 for efficiency
+    #             unique_points=set(list(unique_points)[:max_points])
+    #             break
+
+    # A new algorithm
     valid_images = set()
+    image_scores = []
+    point3d_dict = {}
     for ind in unique_images:
         img=images[ind]
         points_3d_image=img.point3D_ids[np.where(img.point3D_ids!=-1)]
         intersection=set(points_3d_image).intersection(points3d_level)
-        if len(intersection)/len(points3d_level) > pruning:
-            R, t= qvec2rotmat(img.qvec), img.tvec
-            C=-R.T@t
-            distance=np.linalg.norm(np.array(camera_pos) - np.array(C))
-            if distance>max_distance:
-                max_distance=distance
-            unique_points.update(points_3d_image)
-            valid_images.add(ind)
-            if len(unique_points) > max_points:
-                # Limit the number of unique points to 10000 for efficiency
-                unique_points=set(list(unique_points)[:max_points])
-                break
+        image_scores.append((len(intersection)/len(points3d_level), ind))
+        point3d_dict[ind] = points_3d_image
+    # Sort all candidate images by overlap scores: high -> low.
+    # First save the visible 3D points from high-score images until we get MAX NUMBER point3d.
+    # But if the overlap is too small, break in advance
+    image_scores.sort(key=lambda x: x[0], reverse=True)
+    for overlap_score, im_id in image_scores:
+        # Ensure we are not including images with too small overlap
+        if overlap_score <= pruning: 
+            break 
+
+        valid_images.add(im_id)
+        unique_points.update(point3d_dict[im_id])
+        img = images[im_id]
+        R, t= qvec2rotmat(img.qvec), img.tvec
+        C=-R.T@t
+        distance=np.linalg.norm(np.array(camera_pos) - np.array(C))
+        if distance>max_distance:
+            max_distance=distance
+            
+        if len(unique_points) >= max_points:
+            # Limit the number of unique points to 10000 for efficiency
+            expansion_points = list(unique_points - set(points3d_level))
+            buffer = max_points - len(points3d_level)
+            if buffer > 0:
+                unique_points = list(points3d_level) + expansion_points[:buffer]
+            else:
+                unique_points = list(points3d_level)[:max_points]
+            
+            unique_points=np.array(list(unique_points))
+            return valid_images, unique_points[np.where(unique_points!=-1)], max_distance
+
        
     unique_points=np.array(list(unique_points))    
     unique_points=unique_points[np.where(unique_points!=-1)] # Remove points not in sfm model.
@@ -149,7 +191,7 @@ if __name__ == "__main__":
         if p.is_dir()
     ])
 
-    for scene in scene_names[1:13]: # Change the slice to process more scenes
+    for scene in scene_names[:12]: # Change the slice to process more scenes
         print(f"Start processing covisibility search for scene: {scene}...")
         images_path = root / scene / "images" # Contains all .jpg images
         output_dir = outputs / scene
@@ -181,8 +223,8 @@ if __name__ == "__main__":
                 images=images,
                 points3D=point3D,
                 camera_pos=camera_center,
-                pruning=0.4,
-                max_points=10000
+                pruning=0.35,
+                max_points=8192
             )
             print(f"Query Image: {query_image}, Matched Image: {matched_image}")
             print(f"  Unique Images Found: {len(unique_images)}")

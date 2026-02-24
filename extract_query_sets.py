@@ -4,16 +4,17 @@ from pathlib import Path
 
 random.seed(42)
 def extract_query_sets(scene: str, 
-                       sfm_model_dir: Path, 
+                       sfm_model_dir: Path,
+                       depth_model_dir: Path, 
                        output_dir: Path,
-                       sample_ratio=0.001, 
+                       sample_ratio=0.01, 
                        query_image_ratio=0.2,
                        ):
     
     print(f"Processing scene: {scene}")
 
     sfm_model_path = sfm_model_dir / scene / "sparse"
-
+    scene_depth_path = depth_model_dir / scene
     output_path = output_dir / scene
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -24,20 +25,31 @@ def extract_query_sets(scene: str,
     num_samples = int(total_points * sample_ratio)
     sampled_ids = random.sample(point_ids, num_samples)
     print(f"Original 3D points: {total_points}; Sampled 3D points: {num_samples}")
-
+    def has_depth(image_id):
+        img_name = images[image_id].name
+        h5_path1 = scene_depth_path / f"{Path(img_name).stem}.h5"
+        h5_path2 = scene_depth_path / f"{img_name}.h5"
+        return h5_path1.exists() or h5_path2.exists()
+    
     # collect image names that observe the sampled 3D points
     oberved_image_ids = set()
+    query_image_ids = set()
     for pid in sampled_ids:
-        oberved_image_ids.update(points3D[pid].image_ids)
+        img_ids_for_point = points3D[pid].image_ids
+        oberved_image_ids.update(img_ids_for_point)
+        # query_image_ids.update(random.sample(list(points3D[pid].image_ids), 1))
+
+        valid_img_ids = [iid for iid in img_ids_for_point if has_depth(iid)]
+        
+        if valid_img_ids:
+            query_image_ids.update(random.sample(valid_img_ids, 1))
 
     print(f"Total oberved images: {len(oberved_image_ids)}")
 
     # randomly select a subset of oberved images as query images
     maximum_query_images = int(len(oberved_image_ids) * query_image_ratio)
-    query_image_ids = random.sample(
-        list(oberved_image_ids), 
-        min(len(oberved_image_ids), maximum_query_images)
-        )
+    if len(query_image_ids) > maximum_query_images:
+        query_image_ids = random.sample(list(query_image_ids),  maximum_query_images)
 
     print(f"Query images collected: {len(query_image_ids)}")
 
@@ -100,7 +112,8 @@ if __name__ == "__main__":
     for scene in scene_names[:13]:  # change the slice to process more scenes
         extract_query_sets(scene,
                            root,
+                           root.parent / "depth_undistorted",
                            output_dir / "query_sets",
                            sample_ratio=0.001,
-                           query_image_ratio=0.2)
+                           query_image_ratio=0.20)
         
