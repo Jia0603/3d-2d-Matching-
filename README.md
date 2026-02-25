@@ -12,4 +12,7 @@ LightGlu3D/
 ├── utils.py                     # Utility functions
 ├── run_sfm_gpu.sh               # Shell script to run sbatch GPU job
 └── run_sfm_cpu.sh               # Shell script to run sbatch CPU job
+├── feature_3d_compute.py        # Old experiment on projecting 3D to an image, for baseline use
+├── image_retrival.py            # Old experiment on projecting 3D to an image, for baseline use
+├── preprocessing.ipynb          # Old experiment on projecting 3D to an image, for baseline use
 '''
