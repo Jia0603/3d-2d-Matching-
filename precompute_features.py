@@ -4,6 +4,7 @@ import numpy as np
 from tqdm import tqdm
 from hloc.utils import read_write_model as rw
 from collections import defaultdict
+import os
 
 def extract_3d_descriptors(points3D, images, h5_path):
     """
@@ -65,6 +66,10 @@ def extract_3d_descriptors(points3D, images, h5_path):
 
 
 def save_3d_features_to_h5(feature_dict, output_path):
+    parent_dir = os.path.dirname(output_path)
+    if not os.path.exists(parent_dir):
+        os.makedirs(parent_dir, exist_ok=True)
+        
     with h5py.File(output_path, "w") as f:
         for p3d_id, data in feature_dict.items():
             grp = f.create_group(p3d_id)
@@ -76,7 +81,7 @@ if __name__ == "__main__":
 
     root = Path("/proj/vlarsson/datasets/megadepth/Undistorted_SfM")
     scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
-    for scene in scene_names[:12]:
+    for scene in scene_names[5:12]:
 
         print(f"Start averaged feature computation for scene {scene}...")
         sfm_dir = Path("/proj/vlarsson/outputs/sfm") / scene / "sfm_superpoint+lightglue"

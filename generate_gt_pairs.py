@@ -1,7 +1,5 @@
 import h5py
-from tqdm import tqdm
 from pathlib import Path
-import h5py
 import pickle
 import numpy as np
 from utils import qvec2rotmat
@@ -171,7 +169,7 @@ def compute_ground_truth_matches(
         rel_error[valid_depth] = (
             np.abs(z[valid_depth] - depth_real[valid_depth])
             / depth_real[valid_depth]
-        )
+        ).flatten()
 
         depth_mask = (rel_error <= depth_rel_thresh)
 
@@ -201,29 +199,7 @@ def load_depth(depth_path):
         depth = f['depth'][:]
     return depth
 
-output_dir = Path("/proj/vlarsson/outputs") 
-scene = "0000"
-query_path = output_dir / "query_sets" / scene
-query_names = query_path / "query_image_names.txt"
-query_pose = query_path / "query_image_cameras.txt"
-
-feats_3d_path = output_dir / "midterm_results" / scene / "points3D_feats_cache.h5" # averaged descriptors for all 3D points
-feats_2d_path = output_dir / "sfm" / scene / "feats-superpoint-n2048.h5" # cached SP descriptors
-covisibility_result_path = output_dir / "midterm_results" / scene / "covisibility_results.pkl" # covisibility results for all queries
-depth_path = Path("/proj/vlarsson/datasets/megadepth/depth_undistorted") / scene # depth maps for all queries
-# load query names to a list
-with open(query_names, 'r') as f:
-    query_list = [line.strip() for line in f]
-
-# load covisibility result, where covisibility_results[query_image] = {'unique_images': set of img_ids,
-# 'unique_points': np.array of point3D ids, 'max_distance': float}
-with open(covisibility_result_path, "rb") as f:
-    covisibility_dict = pickle.load(f)
-
-# load query pose infos
-query_cams = load_query_cams(query_pose)
-
-for query in query_list[:1]:
+def generate_gt_for_query(query, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path):
     # extract SP keypoints descriptors of the query
     query_feats = extract_query_decriptors(query, feats_2d_path)
 
@@ -241,27 +217,56 @@ for query in query_list[:1]:
     matches0, matches1 = compute_ground_truth_matches(
         query_feats, p3d_feats, camera, depth_map, reproj_thresh=3.0, depth_rel_thresh=0.1
     )
-    
     gt_data = {
-        "keypoints0": query_feats["keypoints"],
-        "descriptors0": query_feats["descriptors"].T, # to shape(N,D)
-        "keypoints1": p3d_feats["keypoints"],
-        "descriptors1": p3d_feats["descriptors"],
-        "matches0": matches0,
-        "matches1": matches1,
+            "keypoints0": query_feats["keypoints"], # shape (N,2))
+            "descriptors0": query_feats["descriptors"].T, # to shape(N,D)
+            "keypoints1": p3d_feats["keypoints"], # shape (M,3)
+            "descriptors1": p3d_feats["descriptors"],# shape(M,D)
+            "matches0": matches0, # shape(N,), matched 3D point index or -1
+            "matches1": matches1, # shape(M,), matched 2D keypoint index or -1
     }
+    
+    return gt_data
 
-    print(f"Shape of keypoints0: {np.shape(gt_data['keypoints0'])}")
-    print(f"Shape of descriptors0: {np.shape(gt_data['descriptors0'])}")
-    print(f"Shape of keypoints1: {np.shape(gt_data['keypoints1'])}")
-    print(f"Shape of descriptors1: {np.shape(gt_data['descriptors1'])}")
-    print(f"Shpae of matches0: {np.shape(gt_data['matches0'])}")
-    print(f"Shpae of matches1: {np.shape(gt_data['matches1'])}")
-    print(gt_data)
-    print(matches0)
-    print("num matches0:", np.sum(matches0 != -1))
-    print(matches1)
-    print("num matches1:", np.sum(matches1 != -1))
+if __name__ == "__main__":
+    output_dir = Path("/proj/vlarsson/outputs") 
+    scene = "0000"
+    query_path = output_dir / "query_sets" / scene
+    query_names = query_path / "query_image_names.txt"
+    query_pose = query_path / "query_image_cameras.txt"
+
+    feats_3d_path = output_dir / "midterm_results" / scene / "points3D_feats_cache.h5" # averaged descriptors for all 3D points
+    feats_2d_path = output_dir / "sfm" / scene / "feats-superpoint-n2048.h5" # cached SP descriptors
+    covisibility_result_path = output_dir / "midterm_results" / scene / "covisibility_results.pkl" # covisibility results for all queries
+    depth_path = Path("/proj/vlarsson/datasets/megadepth/depth_undistorted") / scene # depth maps for all queries
+    # load query names to a list
+    with open(query_names, 'r') as f:
+        query_list = [line.strip() for line in f]
+
+    # load covisibility result, where covisibility_results[query_image] = {'unique_images': set of img_ids,
+    # 'unique_points': np.array of point3D ids, 'max_distance': float}
+    with open(covisibility_result_path, "rb") as f:
+        covisibility_dict = pickle.load(f)
+
+    # load query pose infos
+    query_cams = load_query_cams(query_pose)
+    gt_data = {}
+    for query in query_list[:1]:
+        gt_data[query] = generate_gt_for_query(
+            query, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path
+            )
+
+    # print(f"Shape of keypoints0: {np.shape(gt_data['keypoints0'])}")
+    # print(f"Shape of descriptors0: {np.shape(gt_data['descriptors0'])}")
+    # print(f"Shape of keypoints1: {np.shape(gt_data['keypoints1'])}")
+    # print(f"Shape of descriptors1: {np.shape(gt_data['descriptors1'])}")
+    # print(f"Shpae of matches0: {np.shape(gt_data['matches0'])}")
+    # print(f"Shpae of matches1: {np.shape(gt_data['matches1'])}")
+    # print(gt_data)
+    # print(matches0)
+    # print("num matches0:", np.sum(matches0 != -1))
+    # print(matches1)
+    # print("num matches1:", np.sum(matches1 != -1))
     
 
 
