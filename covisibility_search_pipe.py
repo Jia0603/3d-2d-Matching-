@@ -1,4 +1,5 @@
 import numpy as np
+from collections import defaultdict
 from hloc import extract_features, pairs_from_retrieval
 from hloc.utils import read_write_model as rw
 from pathlib import Path
@@ -59,20 +60,20 @@ def most_similar_pair(reference_dir, query_dir, output_dir):
     pairs_from_retrieval.main(
         descriptors=feature_dir,     
         output=pair_file,               
-        num_matched=1,                    
+        num_matched=5,   # find more similar images, in case the most similar one has no 3D points in SfM model.                 
         query_list=query_list,        
         db_list=ref_list,            
     )
 
     print("\nThe most similar reference image:")
-    matched_pairs_dict = {}
+    matched_pairs_dict = defaultdict(list)
     with open(pair_file) as f:
         for line in f.readlines():
             if line.strip():
                 parts = line.strip().split()
                 if len(parts) >= 2:
-                    matched_pairs_dict[parts[0]] = parts[1]
-                    print(f"Query Image: {parts[0]}  -->  Matched Image: {parts[1]}")
+                    matched_pairs_dict[parts[0]].append(parts[1])
+                    # print(f"Query Image: {parts[0]}  -->  Matched Image: {parts[1]}")
                 else:
                     print(f"Invalid line format: {line.strip()}")
 
@@ -197,7 +198,7 @@ if __name__ == "__main__":
         output_dir = outputs / scene
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Find the most similar image pairs in Scenexxxx
+        # Find the five most similar images for each query image in Scenexxxx
         matched_pairs_dict = most_similar_pair(
             reference_dir=images_path,
             query_dir=images_path,
@@ -211,8 +212,12 @@ if __name__ == "__main__":
         
         # Conduct covisibility search for each matched pair
         covisibility_results = {}
-        for query_image, matched_image in matched_pairs_dict.items():
-            points3d_level = map_img_to_points3d(matched_image, images)
+        for query_image, matched_images in matched_pairs_dict.items():
+            for matched_image in matched_images:
+                points3d_level = map_img_to_points3d(matched_image, images)
+                if len(points3d_level) != 0: 
+                    # If the most similar image has no 3D correspondences, move to the next one
+                    break
 
             img = images[map_img_name_to_id(matched_image, images)]
             R, t = qvec2rotmat(img.qvec), img.tvec
