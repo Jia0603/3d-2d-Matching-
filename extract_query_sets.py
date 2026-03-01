@@ -37,8 +37,7 @@ def extract_query_sets(scene: str,
     for pid in sampled_ids:
         img_ids_for_point = points3D[pid].image_ids
         oberved_image_ids.update(img_ids_for_point)
-        # query_image_ids.update(random.sample(list(points3D[pid].image_ids), 1))
-
+        # filter out images without depth maps
         valid_img_ids = [iid for iid in img_ids_for_point if has_depth(iid)]
         
         if valid_img_ids:
@@ -114,6 +113,6 @@ if __name__ == "__main__":
                            root,
                            root.parent / "depth_undistorted",
                            output_dir / "query_sets",
-                           sample_ratio=0.001,
+                           sample_ratio=0.0015,
                            query_image_ratio=0.20)
         

@@ -15,7 +15,8 @@ def most_similar_pair(reference_dir, query_dir, output_dir):
     # query_list = output_dir / "query_list.txt"
     # TODO: training stage read all queries from dataset, uncomment this when inference
 
-    feature_dir = output_dir / "global_features.h5"
+    references_features = output_dir / 'feats-netvlad-ref.h5'
+    queries_features = output_dir / 'feats-netvlad-query.h5'
     pair_file = output_dir / "most_similar_pairs.txt"
 
     _, images, _ = rw.read_model(
@@ -24,6 +25,8 @@ def most_similar_pair(reference_dir, query_dir, output_dir):
     image_names = [img.name for img in images.values()]
     with open(ref_list, "w") as f:
         for name in sorted(image_names):
+            # if len(map_img_to_points3d(name, images)) == 0:
+            #     continue
             f.write(str(name) + "\n")
 
     # with open(ref_list, "w") as f:
@@ -45,22 +48,31 @@ def most_similar_pair(reference_dir, query_dir, output_dir):
         conf=feature_conf,
         image_list=ref_list,
         image_dir= reference_dir,
-        feature_path=feature_dir,
+        feature_path=references_features,
     )
 
     extract_features.main(
         conf=feature_conf,
         image_list=query_list,
         image_dir=query_dir,
-        feature_path=feature_dir,
+        feature_path=queries_features,
     )
 
     print("Performing image retrieval...")
 
+    # pairs_from_retrieval.main(
+    #     descriptors=feature_dir,     
+    #     output=pair_file,               
+    #     num_matched=5,   # find more similar images, in case the most similar one has no 3D points in SfM model.                 
+    #     query_list=query_list,        
+    #     db_list=ref_list,            
+    # )
+
     pairs_from_retrieval.main(
-        descriptors=feature_dir,     
+        descriptors=queries_features,
+        db_descriptors=references_features,     
         output=pair_file,               
-        num_matched=5,   # find more similar images, in case the most similar one has no 3D points in SfM model.                 
+        num_matched=1,                   
         query_list=query_list,        
         db_list=ref_list,            
     )

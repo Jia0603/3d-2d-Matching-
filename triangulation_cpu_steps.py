@@ -6,27 +6,12 @@ from hloc.utils import read_write_model as rw
 from hloc import triangulation
 import numpy as np
 import shutil
+import os
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 def filter_reference_model(reference_model, output_model, valid_images):
     cameras, images, points3D = rw.read_model(reference_model)
     assert reference_model != output_model
-
-    # images_filtered = {
-    #     image_id: img
-    #     for image_id, img in images.items()
-    #     if img.name in valid_images
-    # }
-
-    # valid_point3D_ids = set()
-    # for img in images_filtered.values():
-    #     valid_point3D_ids.update(img.point3D_ids)
-
-    # points3D_filtered = {
-    #     pid: p
-    #     for pid, p in points3D.items()
-    #     if pid in valid_point3D_ids
-    # }
 
     images_filtered = {}
 
@@ -94,6 +79,8 @@ for scene in scene_names[:12]: # change the slice to process more scenes
     # Step 3: Triangulation to obtain 3D model
     model = triangulation.main(sfm_dir, filtered_model_path, images_path, sfm_pairs, feature_path, match_path)
     shutil.rmtree(filtered_model_path)
+    os.remove(match_path)
+    print(f"Removed intermediate files: {filtered_model_path} and {match_path}.")
     print(f"Secene {scene} 3D triangulation on CPU completed.")
 
     # Step 4: Visualization
