@@ -25,8 +25,8 @@ def most_similar_pair(reference_dir, query_dir, output_dir):
     image_names = [img.name for img in images.values()]
     with open(ref_list, "w") as f:
         for name in sorted(image_names):
-            # if len(map_img_to_points3d(name, images)) == 0:
-            #     continue
+            if len(map_img_to_points3d(name, images)) == 0:
+                continue # Skip images with no 3D correspondences in SfM model.
             f.write(str(name) + "\n")
 
     # with open(ref_list, "w") as f:
@@ -210,7 +210,7 @@ if __name__ == "__main__":
         output_dir = outputs / scene
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Find the five most similar images for each query image in Scenexxxx
+        # Find the most similar images for each query image in Scenexxxx
         matched_pairs_dict = most_similar_pair(
             reference_dir=images_path,
             query_dir=images_path,
