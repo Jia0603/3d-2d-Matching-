@@ -37,3 +37,82 @@ LightGlu3D/
 
 
 '''
+
+
+
+
+```
+
+# Merge with Jia in Github
+
+# Berzelius cluster login
+password: lsy20020409
+code: (from NSC Berzelius:x_lishu)
+
+cd matching
+cd colla_preprocess/3d-2d-Matching-
+
+cd colla_gluefactory/glue-factory-2d3d-match
+
+
+---
+
+# Git operations for preprocess
+# git init
+# git remote add origin https://github.com/Jia0603/3d-2d-Matching-.git
+# git fetch origin
+# git checkout -b lsy-merged origin/lsy-merged
+git checkout lsy-merged
+git config --global user.name "Shuying Liu"
+git config --global user.email "liushuying.blaise.2490@gmail.com"
+git add .
+git commit -m "Restructure"
+git push origin lsy-merged --force
+
+# Git operations for training
+
+
+---
+
+# Environment (install process in lsy-old)
+mamba activate matchenv
+
+# Preprocess
+
+# Still use 10 scenes for training, 1 scene for validation, 1 for testing
+# Change other scenes to try the pipeline
+# Train list:
+/home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean_try.txt
+# Valid list:
+/home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/valid_scenes_clean_try.txt
+# Test list:
+/home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/test_scenes_clean_try.txt
+
+# Split query images (split_query_ref)
+# Change the way to get scene, from scene list or single scene for test
+# Change to accpet arguments for ratios
+# Change logger and tqdm
+
+# Single scene
+# Valid
+python -m split_query_ref.extract_query_sets_re \
+ --outputs  /proj/vlarsson/users/x_lishu/colla_matching/outputs/query_sets \
+--scene 0022
+
+# Test
+python -m split_query_ref.extract_query_sets_re \
+ --outputs  /proj/vlarsson/users/x_lishu/colla_matching/outputs/query_sets \
+--scene 0025
+
+# Train scene list
+python -m split_query_ref.extract_query_sets_re \
+ --outputs  /proj/vlarsson/users/x_lishu/colla_matching/outputs/query_sets \
+--scene_list /home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean_try.txt
+
+# Output
+ls /proj/vlarsson/users/x_lishu/colla_matching/outputs/query_sets
+
+# Covisibility
+
+
+```

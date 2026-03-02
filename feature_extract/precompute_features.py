@@ -81,7 +81,7 @@ if __name__ == "__main__":
 
     root = Path("/proj/vlarsson/datasets/megadepth/Undistorted_SfM")
     scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
-    for scene in scene_names[5:12]:
+    for scene in scene_names[:12]:
 
         print(f"Start averaged feature computation for scene {scene}...")
         sfm_dir = Path("/proj/vlarsson/outputs/sfm") / scene / "sfm_superpoint+lightglue"
