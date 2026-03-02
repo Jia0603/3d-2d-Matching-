@@ -1,3 +1,4 @@
+```
 # Berzelius cluster
 password: lsy20020409
 code: (from NSC Berzelius:x_lishu)
@@ -13,6 +14,12 @@ cd matching
 # Git operations
 # git init
 # git remote add origin https://github.com/Jia0603/3d-2d-Matching-.git
+git checkout lsy-old
+git config --global user.name "Shuying Liu"
+git config --global user.email "liushuying.blaise.2490@gmail.com"
+git add .
+git commit -m " "
+git push origin lsy-old --force
 
 ---
 
@@ -171,3 +178,4 @@ nvidia-smi
 nvtop
 top  # to check CPU usage
 htop  # this is a better version than top to check CPU usage. More user friendly.
+```
