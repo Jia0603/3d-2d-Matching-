@@ -49,21 +49,21 @@ def extract_query_sets(scene: str,
         return h5_path1.exists() or h5_path2.exists()
     
     # collect image names that observe the sampled 3D points
-    oberved_image_ids = set()
+    observed_image_ids = set()
     query_image_ids = set()
     for pid in sampled_ids:
         img_ids_for_point = points3D[pid].image_ids
-        oberved_image_ids.update(img_ids_for_point)
+        observed_image_ids.update(img_ids_for_point)
         # filter out images without depth maps
         valid_img_ids = [iid for iid in img_ids_for_point if has_depth(iid)]
         
         if valid_img_ids:
             query_image_ids.update(random.sample(valid_img_ids, 1))
 
-    logger.info(f"Total oberved images: {len(oberved_image_ids)}")
+    logger.info(f"Total observed images: {len(observed_image_ids)}")
 
-    # randomly select a subset of oberved images as query images
-    maximum_query_images = int(len(oberved_image_ids) * query_image_ratio)
+    # randomly select a subset of observed images as query images
+    maximum_query_images = int(len(observed_image_ids) * query_image_ratio)
     if len(query_image_ids) > maximum_query_images:
         query_image_ids = random.sample(list(query_image_ids),  maximum_query_images)
 
