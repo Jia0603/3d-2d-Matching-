@@ -21,7 +21,7 @@ LightGlu3D/
 ├── covisibility
 ├──── covisibility_search_pipe.py   # Filter block for query-relevant 3D points and references
 ├──── check_covisibility_thres.py
-├── feature_extract
+├── feature
 ├──── precompute_features.py        # Cache the averaged descriptors for 3D points
 ├── ground_truth
 ├──── generate_gt_pairs.py          # Base function to generate Ground Truth pairs, further applied as dataloader in gluefactory
@@ -173,6 +173,45 @@ python -m covisibility.covisibility_search_pipe_re \
 ---
 
 # Feature computation
+
+python -m feature.precompute_features \
+ --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+ --outputs /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
+ --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
+ --scene_list /home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean_try.txt
+
+
+---
+
+# Ground Truth
+
+python -m ground_truth.generate_gt_pairs_re \
+ --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
+ --query_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
+ --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
+ --feature_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
+ --scene_list /home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean_try.txt
+
+# output
+ls /proj/vlarsson/users/x_lishu/colla_matching/outputs/feature
+
+---
+
+# Visualization
+
+python -m visualization.visualize_normalization \
+  --outputs /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
+  --query_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
+  --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
+  --scene 0022
+
+python -m visualization.visualize_nn_matches \
+ --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+ --outputs /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
+ --query_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
+ --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
+ --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
+ --scene 0022
 
 
 ```

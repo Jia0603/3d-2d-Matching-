@@ -61,7 +61,7 @@ def most_similar_pair(reference_dir, query_dir, output_dir, query_list_path, sfm
         db_list=ref_list,            
     )
 
-    logger.info("\nThe most similar reference image:")
+    # logger.info("\nThe most similar reference image:")
     matched_pairs_dict = defaultdict(list)
     with open(pair_file) as f:
         for line in f.readlines():

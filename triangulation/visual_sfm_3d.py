@@ -2,7 +2,7 @@ import pycolmap
 import numpy as np
 from hloc.utils import viz_3d
 from pathlib import Path
-from .utils import qvec2rotmat
+from utils.utils import qvec2rotmat
 import plotly.io as pio
 import plotly.graph_objects as go
 from pathlib import Path
