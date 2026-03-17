@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import argparse
 import logging
 from tqdm import tqdm
+from scipy.spatial import cKDTree
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -195,17 +196,57 @@ def compute_ground_truth_matches(query_feats, p3d_feats, camera,
 
     projected = np.stack([u, v], axis=1)
 
+    
+    # Trying fast methods part:
+    # Fisrt is the original search
     # find the nearest 2D keypoint
-    for idx3d, proj_pt in zip(valid_indices, projected):
+    # for idx3d, proj_pt in zip(valid_indices, projected):
 
-        dists = np.linalg.norm(kpts2d - proj_pt, axis=1)
-        min_idx = np.argmin(dists)
+    #     dists = np.linalg.norm(kpts2d - proj_pt, axis=1)
+    #     min_idx = np.argmin(dists)
 
-        if dists[min_idx] < reproj_thresh:
+    #     if dists[min_idx] < reproj_thresh:
 
-            if matches0[min_idx] == -1: # in case to rewrite, only register the first matched pair
-                matches0[min_idx] = idx3d
-                matches1[idx3d] = min_idx
+    #         if matches0[min_idx] == -1: # in case to rewrite, only register the first matched pair
+    #             matches0[min_idx] = idx3d
+    #             matches1[idx3d] = min_idx
+
+    # Second is to use KDTree
+    if len(projected) > 0 and N2D > 0:
+        tree = cKDTree(kpts2d)
+        
+        # Query the tree for the nearest 2D keypoint to each projected 3D point
+        # distance_upper_bound acts as an instant cutoff mask (reproj_thresh)
+        dists, min_indices = tree.query(projected, distance_upper_bound=reproj_thresh)
+        
+        # Iterate over the valid results and assign matches
+        for idx3d, min_idx, dist in zip(valid_indices, min_indices, dists):
+            # cKDTree returns len(kpts2d) if no neighbor was found within the threshold
+            if min_idx < N2D: 
+                if matches0[min_idx] == -1:
+                    matches0[min_idx] = idx3d
+                    matches1[idx3d] = min_idx
+
+    # Third is to use cidst
+    # if len(projected) > 0 and N2D > 0:
+    #     kpts_tensor = torch.from_numpy(kpts2d).float()
+    #     proj_tensor = torch.from_numpy(projected).float()
+        
+    #     # Calculate the dense distance matrix
+    #     dist_matrix = torch.cdist(kpts_tensor, proj_tensor)
+        
+    #     # Find the minimum distance along the 2D keypoint dimension
+    #     min_dists, min_indices = torch.min(dist_matrix, dim=0)
+        
+    #     min_dists = min_dists.numpy()
+    #     min_indices = min_indices.numpy()
+        
+    #     # Iterate over the valid results and assign matches
+    #     for idx3d, min_idx, dist in zip(valid_indices, min_indices, min_dists):
+    #         if dist < reproj_thresh:
+    #             if matches0[min_idx] == -1:
+    #                 matches0[min_idx] = idx3d
+    #                 matches1[idx3d] = min_idx
 
     return matches0, matches1
 

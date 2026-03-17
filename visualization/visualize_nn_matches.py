@@ -51,8 +51,9 @@ def get_most_similar_ref(query_name, pair_file_path):
 def compute_nn_baseline(q_desc, p3d_desc, device):
     nn_conf = {
         "name": "matchers.nearest_neighbor_matcher",
-        "do_mutual_check": True,
-        "ratio_threshold": 0.8,
+        "mutual_check": True,
+        "ratio_thresh": None,
+        "distance_thresh": 0.75,
     }
     matcher = get_model(nn_conf["name"])(nn_conf).eval().to(device)
 
@@ -67,28 +68,26 @@ def compute_nn_baseline(q_desc, p3d_desc, device):
     pred_matches0 = pred['matches0'][0].cpu().numpy() 
     return pred_matches0
 
-def launch_rerun_visualization(nn_matches0, gt_matches0, q_kpts, p3d_kpts, raw_pts_np, raw_colors_np, scene, args, query_name, ref_name, camera):
-    logger.info("Initializing Rerun Analytics Dashboard...")
+def launch_rerun_visualization(pred_matches0, gt_matches0, q_kpts, p3d_kpts, raw_pts_np, raw_colors_np, scene, args, query_name, ref_name, camera, ref_pose_matrix, method_name="Baseline"):
+    logger.info(f"Initializing Rerun Analytics Dashboard for {method_name}...")
     
     # Initialize rerun
-    rr.init(f"Matches_Scene_{scene}", spawn=False)
+    rr.init(f"Matches_Scene_{scene}_{method_name}", spawn=False)
 
-    # Calculate matches info
-    valid_pred = nn_matches0 > -1
+    # Calculate matches info using the generic 'pred_matches0'
+    valid_pred = pred_matches0 > -1
     valid_gt = gt_matches0 > -1
     
-    idx_correct = valid_pred & valid_gt & (nn_matches0 == gt_matches0) # Correct prediction
-    idx_confused = valid_pred & valid_gt & (nn_matches0 != gt_matches0) # Confused wrong prediction
+    idx_correct = valid_pred & valid_gt & (pred_matches0 == gt_matches0) # Correct prediction
+    idx_confused = valid_pred & valid_gt & (pred_matches0 != gt_matches0) # Confused wrong prediction
     idx_hallucinated = valid_pred & (~valid_gt) # Hallucinated wrong prediction
-    idx_ignored = (~valid_pred) & valid_gt # Missed ground truth
+    idx_missed = (~valid_pred) & valid_gt # Missed ground truth
+    idx_unmatchable = (~valid_pred) & (~valid_gt) # Ignored unmatchable points
 
     # Set up cameras and images
     cameras, images, _ = rw.read_model(args.sfm_dir / scene / "sfm_superpoint+lightglue", ext=".bin")
     ref_image_obj = next((img for img in images.values() if img.name == ref_name), None)
     ref_cam_obj = cameras[ref_image_obj.camera_id]
-
-    ref_R = qvec2rotmat(ref_image_obj.qvec)
-    ref_pose_matrix = np.hstack((ref_R, ref_image_obj.tvec.reshape(3, 1)))
     ref_poselib_cam = MockCamera(ref_cam_obj.width, ref_cam_obj.height, ref_cam_obj.params)
 
     q_pose_matrix = np.hstack((qvec2rotmat(camera["qvec"]), np.array(camera["tvec"]).reshape(3, 1)))
@@ -113,49 +112,50 @@ def launch_rerun_visualization(nn_matches0, gt_matches0, q_kpts, p3d_kpts, raw_p
     rr.log(f"{img_path}/Correct", rr.Points2D(q_kpts[idx_correct], colors=[0, 255, 0], radii=4.0)) # Green
     rr.log(f"{img_path}/Confused", rr.Points2D(q_kpts[idx_confused], colors=[255, 165, 0], radii=3.0)) # Orange
     rr.log(f"{img_path}/Hallucinated", rr.Points2D(q_kpts[idx_hallucinated], colors=[255, 0, 0], radii=3.0)) # Red
-    rr.log(f"{img_path}/Ignored", rr.Points2D(q_kpts[idx_ignored], colors=[0, 150, 255], radii=3.0)) # Blue
+    rr.log(f"{img_path}/Missed", rr.Points2D(q_kpts[idx_missed], colors=[0, 150, 255], radii=3.0)) # Blue
+    rr.log(f"{img_path}/Unmatchable", rr.Points2D(q_kpts[idx_unmatchable], colors=[128, 0, 128], radii=2.0)) # Purple
 
     # Load visible sfm model
     rr.log("world/SfM_Context", rr.Points3D(raw_pts_np, colors=raw_colors_np, radii=0.03))
     cam_center = (-q_pose_matrix[:, :3].T @ q_pose_matrix[:, 3]).flatten()
 
     # Correct predicted matches (Green points and lines)
-    correct_3d_pts = p3d_kpts[nn_matches0[idx_correct]]
+    correct_3d_pts = p3d_kpts[pred_matches0[idx_correct]]
     correct_lines = [[cam_center, pt] for pt in correct_3d_pts]
     rr.log("world/Predictions/Correct/Points", rr.Points3D(correct_3d_pts, colors=[0, 255, 0], radii=0.06))
     rr.log("world/Predictions/Correct/Lines", rr.LineStrips3D(correct_lines, colors=[0, 255, 0, 100]))
     
     # Confused wrong prediction (Orange points and lines + yellow error vectors)
-    confused_3d_pts = p3d_kpts[nn_matches0[idx_confused]]
+    confused_3d_pts = p3d_kpts[pred_matches0[idx_confused]]
     confused_lines = [[cam_center, pt] for pt in confused_3d_pts]
     rr.log("world/Predictions/Confused/Points", rr.Points3D(confused_3d_pts, colors=[255, 165, 0], radii=0.06))
     rr.log("world/Predictions/Confused/Lines", rr.LineStrips3D(confused_lines, colors=[255, 165, 0, 80]))
-    pred_pts_for_error = p3d_kpts[nn_matches0[idx_confused]]
+    pred_pts_for_error = p3d_kpts[pred_matches0[idx_confused]]
     gt_pts_for_error = p3d_kpts[gt_matches0[idx_confused]]
     error_lines = [[gt_pt, pred_pt] for gt_pt, pred_pt in zip(gt_pts_for_error, pred_pts_for_error)]
     rr.log("world/Predictions/Confused/Error_Vectors", rr.LineStrips3D(error_lines, colors=[255, 255, 0, 200])) 
 
     # Hallucinated wrong prediction (Red points and lines)
-    hallucinated_3d_pts = p3d_kpts[nn_matches0[idx_hallucinated]]
+    hallucinated_3d_pts = p3d_kpts[pred_matches0[idx_hallucinated]]
     hallucinated_lines = [[cam_center, pt] for pt in hallucinated_3d_pts]
     rr.log("world/Predictions/Hallucinated/Points", rr.Points3D(hallucinated_3d_pts, colors=[255, 0, 0], radii=0.06))
     rr.log("world/Predictions/Hallucinated/Lines", rr.LineStrips3D(hallucinated_lines, colors=[255, 0, 0, 80]))
 
-    # # Missed ground truth (Blue points and lines)
-    ignored_3d_pts = p3d_kpts[gt_matches0[idx_ignored]]
-    ignored_lines = [[cam_center, pt] for pt in ignored_3d_pts]
-    rr.log("world/Ground_Truth/Ignored/Points", rr.Points3D(ignored_3d_pts, colors=[0, 150, 255], radii=0.06))
-    rr.log("world/Ground_Truth/Ignored/Lines", rr.LineStrips3D(ignored_lines, colors=[0, 150, 255, 80]))
+    # Missed ground truth (Blue points and lines)
+    missed_3d_pts = p3d_kpts[gt_matches0[idx_missed]]
+    missed_lines = [[cam_center, pt] for pt in missed_3d_pts]
+    rr.log("world/Ground_Truth/Missed/Points", rr.Points3D(missed_3d_pts, colors=[0, 150, 255], radii=0.06))
+    rr.log("world/Ground_Truth/Missed/Lines", rr.LineStrips3D(missed_lines, colors=[0, 150, 255, 80]))
 
     # Save .rrd file
-    output_filename = f"visualization_scene_{scene}.rrd"
+    output_filename = f"visualization_scene_{scene}_{method_name}.rrd"
     rr.save(output_filename)
-    logger.info(f"SUCCESS: Analytics Dashboard saved to {output_filename}")
+    logger.info(f"Rerun .rrd file visualization saved to {output_filename}")
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize Matches in Rerun")
     parser.add_argument('--dataset', type=Path, required=True, help="Path to Undistorted_SfM")
-    parser.add_argument('--outputs', type=Path, required=True, help="Path to covisibility")
+    parser.add_argument('--covisibility_dir', type=Path, required=True, help="Path to covisibility")
     parser.add_argument('--query_dir', type=Path, required=True, help="Path to query")
     parser.add_argument('--sfm_dir', type=Path, required=True, help="Path to sfm outputs")
     parser.add_argument('--depth_dir', type=Path, required=True, help="Path to depth maps")
@@ -171,7 +171,7 @@ def main():
     with open(query_names_file, 'r') as f:
         queries = [line.strip() for line in f if line.strip()]
     query_name = random.choice(queries)
-    ref_name = get_most_similar_ref(query_name, args.outputs / scene / "most_similar_pairs.txt")
+    ref_name = get_most_similar_ref(query_name, args.covisibility_dir / scene / "most_similar_pairs.txt")
     logger.info(f"Query: {query_name} | Reference: {ref_name}")
 
     # Load features
@@ -180,18 +180,30 @@ def main():
         q_desc = f[query_name]["descriptors"][:]
 
     # Load visible 3d points
-    with open(args.outputs / scene / "covisibility_results.pkl", "rb") as f:
+    sfm_model_path = args.sfm_dir / scene / "sfm_superpoint+lightglue"
+    reconstruction = pycolmap.Reconstruction(sfm_model_path)
+
+    with open(args.covisibility_dir / scene / "covisibility_results.pkl", "rb") as f:
         visible_p3d = pickle.load(f)[query_name]["unique_points"]
-    p3d_desc, p3d_kpts = [], []
-    with h5py.File(args.outputs / scene / "points3D_feats_cache.h5", "r") as f:
+
+    p3d_desc, p3d_kpts, raw_colors = [], [], []
+
+    with h5py.File(args.covisibility_dir / scene / "points3D_feats_cache.h5", "r") as f:
         for pid in visible_p3d:
+            pid_int = int(pid)
             pid_str = str(pid)
-            if pid_str in f:
+            if pid_str in f and pid_int in reconstruction.points3D:
                 p3d_desc.append(f[pid_str]["descriptors"][:].reshape(256))
                 p3d_kpts.append(f[pid_str]["keypoints"][:].reshape(3))
-                
+                raw_colors.append(reconstruction.points3D[pid_int].color)
+    if not p3d_kpts:
+        logger.error("No valid 3D coordinates/features found.")
+        return
+
     p3d_desc = np.vstack(p3d_desc).T 
     p3d_kpts = np.vstack(p3d_kpts)   
+    raw_pts_np = p3d_kpts.copy() 
+    raw_colors_np = np.vstack(raw_colors)
 
     # Calculate ground truth
     query_cams = load_query_cams(args.query_dir / scene / "query_image_cameras.txt")
@@ -203,8 +215,13 @@ def main():
         {"keypoints": q_kpts}, {"keypoints": p3d_kpts}, camera, depth_map
     )
 
+    # Load Reference Camera Pose from SfM
+    cameras, images, _ = rw.read_model(sfm_model_path, ext=".bin")
+    ref_image_obj = next((img for img in images.values() if img.name == ref_name), None)
+    ref_R = qvec2rotmat(ref_image_obj.qvec)
+    ref_pose_matrix = np.hstack((ref_R, ref_image_obj.tvec.reshape(3, 1)))
+
     # Get predicted matches (nn)
-    # Change here to visualize other baseline or test
     nn_matches0 = compute_nn_baseline(q_desc, p3d_desc, device)
     
     # Evaluate metrics
@@ -228,37 +245,16 @@ def main():
     logger.info(f"Recall:            {recall:.4f}")
     logger.info("="*30)
 
-    logger.info("Extracting visible SfM model...")
-    sfm_model_path = args.sfm_dir / scene / "sfm_superpoint+lightglue"
-    reconstruction = pycolmap.Reconstruction(sfm_model_path)
-    raw_coords, raw_colors = [], []
-    for pid in visible_p3d:
-        pid = int(pid)
-        if pid in reconstruction.points3D:
-            pt = reconstruction.points3D[pid]
-            raw_coords.append(pt.xyz)
-            raw_colors.append(pt.color)
-            
-    if not raw_coords:
-        logger.error("No valid 3D coordinates found in the reconstruction.")
-        return
-        
-    raw_pts_np = np.vstack(raw_coords)
-    raw_colors_np = np.vstack(raw_colors)
-
     # Launch rerun
     launch_rerun_visualization(
-        nn_matches0=nn_matches0,  # Predictions
-        gt_matches0=gt_matches0,  # Ground truth
-        q_kpts=q_kpts, 
-        p3d_kpts=p3d_kpts, 
-        raw_pts_np=raw_pts_np,
-        raw_colors_np=raw_colors_np,
-        scene=scene, 
-        args=args, 
-        query_name=query_name, 
-        ref_name=ref_name, 
-        camera=camera
+        pred_matches0=nn_matches0, 
+        gt_matches0=gt_matches0,  
+        q_kpts=q_kpts, p3d_kpts=p3d_kpts, 
+        raw_pts_np=raw_pts_np, raw_colors_np=raw_colors_np,
+        scene=scene, args=args, query_name=query_name, ref_name=ref_name, 
+        camera=camera,
+        ref_pose_matrix=ref_pose_matrix,
+        method_name="NN"
     )
 
 if __name__ == "__main__":

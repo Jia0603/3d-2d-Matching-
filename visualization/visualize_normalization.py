@@ -76,9 +76,9 @@ def format_vec(vec):
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize 3D Point Cloud Normalization with 3 Views")
-    parser.add_argument('--outputs', type=Path, required=True, help="Path to midterm_results / covisibility")
+    parser.add_argument('--covisibility_dir', type=Path, required=True, help="Path to covisibility")
     parser.add_argument('--query_dir', type=Path, required=True, help="Path to query_sets")
-    parser.add_argument('--sfm_dir', type=Path, required=True, help="Path to sfm / triangulation outputs")
+    parser.add_argument('--sfm_dir', type=Path, required=True, help="Path to triangulation outputs")
     parser.add_argument('--scene', type=str, required=True, help="Scene ID")
     parser.add_argument('--quantile', type=float, default=0.975, help="Quantile value for normalization")
     args = parser.parse_args()
@@ -87,8 +87,8 @@ def main():
     logger.info(f"Visualizing One Random Query Normalization for Scene {scene}...")
 
     query_names_file = args.query_dir / scene / "query_image_names.txt"
-    pair_file = args.outputs / scene / "most_similar_pairs.txt"
-    covis_file = args.outputs / scene / "covisibility_results.pkl"
+    pair_file = args.covisibility_dir / scene / "most_similar_pairs.txt"
+    covis_file = args.covisibility_dir / scene / "covisibility_results.pkl"
     sfm_model_path = args.sfm_dir / scene / "sfm_superpoint+lightglue"
     
     # Select a random query
