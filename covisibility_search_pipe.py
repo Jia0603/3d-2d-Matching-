@@ -204,7 +204,7 @@ if __name__ == "__main__":
         if p.is_dir()
     ])
 
-    for scene in scene_names[:12]: # Change the slice to process more scenes
+    for scene in scene_names[48:72]: # Change the slice to process more scenes
         print(f"Start processing covisibility search for scene: {scene}...")
         images_path = root / scene / "images" # Contains all .jpg images
         output_dir = outputs / scene

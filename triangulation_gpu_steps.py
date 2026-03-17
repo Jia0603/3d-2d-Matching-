@@ -60,7 +60,7 @@ scene_names = sorted([
     for p in root.iterdir()
     if p.is_dir()
 ])
-
+scene_names.remove("0209")
 def process_scene(scene): # change the slice to process more scenes
     print(f"Start processing scene: {scene}...")
 
@@ -103,7 +103,7 @@ if __name__ == "__main__":
     semaphore = mp.Semaphore(4)
     processes = []
 
-    for scene in scene_names[:12]:
+    for scene in scene_names[96:120]:
         p = mp.Process(target=worker, args=(scene, semaphore))
         p.start()
         processes.append(p)

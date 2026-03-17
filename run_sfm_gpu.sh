@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH -A berzelius-2025-319 
 #SBATCH -J sfm_hloc_gpu               
-#SBATCH -t 00-12:00:00               
-#SBATCH -o log_file/sfm_gpu_step_0to12%j.log
+#SBATCH -t 00-24:00:00               
+#SBATCH -o log_file/sfm_gpu_step_96to120_%j.log
 
 #SBATCH -p berzelius
 #SBATCH --gres=gpu:1

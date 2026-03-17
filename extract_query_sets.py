@@ -107,8 +107,8 @@ if __name__ == "__main__":
     root = Path("/proj/vlarsson/datasets/megadepth/Undistorted_SfM")
     output_dir = Path("/proj/vlarsson/outputs")
     scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
-
-    for scene in scene_names[:13]:  # change the slice to process more scenes
+    scene_names.remove("0209") # empty data set
+    for scene in scene_names[96:120]:  # change the slice to process more scenes
         extract_query_sets(scene,
                            root,
                            root.parent / "depth_undistorted",
