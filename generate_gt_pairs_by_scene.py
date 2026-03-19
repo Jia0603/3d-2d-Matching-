@@ -9,24 +9,6 @@ import torch.nn.functional as F
 import torch
 torch.set_num_threads(1)
 
-def extract_query_decriptors(img_name, h5_path):
-
-    query_feature_dict = {}
-    with h5py.File(h5_path, "r") as f_h5:
-
-        if img_name not in f_h5:
-            print(f"WARNING: {img_name} not found in {h5_path}")
-            return query_feature_dict
-        ds = f_h5[img_name]
-
-        query_feature_dict["descriptors"] = ds["descriptors"][:]
-        query_feature_dict["scores"] = ds["scores"][:]
-        query_feature_dict["keypoints"] = ds["keypoints"][:]
-
-    # print(f"Collected descriptors for query image {img_name}.")
-    
-    return query_feature_dict
-
 def load_query_cams(query_pose_path):
 
     query_pose_dict = {}
@@ -56,33 +38,6 @@ def load_query_cams(query_pose_path):
                 }
             }
     return query_pose_dict
-
-def extract_points3d_descriptors(points3d, h5_path):
-
-    point3d_feature_dict = {}
-    descriptors =[]
-    keypoints = []
-    scores = []
-    with h5py.File(h5_path, "r") as f_h5:
-        all_keys = set(f_h5.keys())
-        for id in points3d:
-            id = str(id)
-            if id not in all_keys:
-                print(f"WARNING: {id} not found in {h5_path}")
-                continue
-            ds = f_h5[id]
-            descriptors.append(ds["descriptors"][:].reshape(1,256))
-            keypoints.append(ds["keypoints"][:].reshape(1,3))
-            scores.append(ds["scores"][:])
-
-
-    point3d_feature_dict["descriptors"] = np.vstack(descriptors)
-    point3d_feature_dict["scores"] = scores
-    point3d_feature_dict["keypoints"] = np.vstack(keypoints)
-
-    # print(f"Collected descriptors for {np.shape(point3d_feature_dict['keypoints'])[0]} 3D points.")
-
-    return point3d_feature_dict
 
 def sample_depth_bilinear(depth_map, u, v):
     """
@@ -129,6 +84,9 @@ def compute_ground_truth_matches(
 
     matches0 = -np.ones(N2D, dtype=int)
     matches1 = -np.ones(N3D, dtype=int)
+
+    if N3D == 0:
+        return matches0, matches1
 
     # pose
     R = qvec2rotmat(camera["qvec"])
@@ -183,29 +141,17 @@ def compute_ground_truth_matches(
         z = z[depth_mask]
         valid_indices = valid_indices[depth_mask]
 
-    projected = np.stack([u, v], axis=1)
+    projected = np.stack([u.flatten(), v.flatten()], axis=1)
 
-    # find the nearest 2D keypoint
-    # for idx3d, proj_pt in zip(valid_indices, projected):
-
-    #     dists = np.linalg.norm(kpts2d - proj_pt, axis=1)
-    #     min_idx = np.argmin(dists)
-
-    #     if dists[min_idx] < reproj_thresh:
-
-    #         if matches0[min_idx] == -1: # in case to rewrite, only register the first matched pair
-    #             matches0[min_idx] = idx3d
-    #             matches1[idx3d] = min_idx
-    #     if len(projected) > 0 and N2D > 0:
     tree = cKDTree(kpts2d)
         
-        # Query the tree for the nearest 2D keypoint to each projected 3D point
-        # distance_upper_bound acts as an instant cutoff mask (reproj_thresh)
+    # Query the tree for the nearest 2D keypoint to each projected 3D point
+    # distance_upper_bound acts as an instant cutoff mask (reproj_thresh)
     dists, min_indices = tree.query(projected, distance_upper_bound=reproj_thresh)
         
-        # Iterate over the valid results and assign matches
+    # Iterate over the valid results and assign matches
     for idx3d, min_idx, dist in zip(valid_indices, min_indices, dists):
-            # cKDTree returns len(kpts2d) if no neighbor was found within the threshold
+        # cKDTree returns len(kpts2d) if no neighbor was found within the threshold
         if min_idx < N2D: 
             if matches0[min_idx] == -1:
                 matches0[min_idx] = idx3d
@@ -218,36 +164,81 @@ def load_depth(depth_path):
         depth = f['depth'][:]
     return depth
 
-def generate_gt_for_query(query, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path):
-    # extract SP keypoints descriptors of the query
-    query_feats = extract_query_decriptors(query, feats_2d_path)
+def generate_gt_for_query(query_list, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path):
+    # extract SP keypoints descriptors of all the queries in one scene
+    all_query_feats = {}
+    query_set = set(query_list)
+    with h5py.File(feats_2d_path, "r") as f_h5:
+        all_keys = set(f_h5.keys())
+        for img_name in query_set:
+            if img_name in all_keys:
+                ds = f_h5[img_name]
+                all_query_feats[img_name] = {
+                    "descriptors": ds["descriptors"][:],
+                    "scores": ds["scores"][:],
+                    "keypoints": ds["keypoints"][:]
+                }
 
-    # load pose and camera of the query
-    camera = query_cams[query] # qvec, tvec...
+    # load 3d descriptors for all the 3d points
+    points3d_feats = {}
+    with h5py.File(feats_3d_path, "r") as f_h5:
+        all_keys = set(f_h5.keys())
+        for id in list(all_keys):
+            ds = f_h5[str(id)]
+            points3d_feats[str(id)] = {
+                "descriptors": ds["descriptors"][:].reshape(1, 256),
+                "keypoints": ds["keypoints"][:].reshape(1, 3),
+                "scores": ds["scores"][:]
+            }
 
-    # extract covisibility results of the query
-    visible_p3d = covisibility_dict[query]["unique_points"]
+    gt_data = {}
+    for query in query_list:
 
-    # load keypoints and descriptors for visible points3D 
-    p3d_feats = extract_points3d_descriptors( visible_p3d, feats_3d_path)
+        if query not in all_query_feats: 
+            print(f"WARNING: {query} not found in all-query-feature list.")
+            continue
 
-    # reproject points3d to get GT
-    depth_map = load_depth(depth_path / f"{Path(query).stem}.h5")
-    matches0, matches1 = compute_ground_truth_matches(
-        query_feats, p3d_feats, camera, depth_map, reproj_thresh=3.0, depth_rel_thresh=0.1
-    )
-    gt_data = {
-            "keypoints0": query_feats["keypoints"], # shape (N,2))
-            "descriptors0": query_feats["descriptors"].T, # to shape(N,D)
-            "keypoints1": p3d_feats["keypoints"], # shape (M,3)
-            "descriptors1": p3d_feats["descriptors"],# shape(M,D)
-            "matches0": matches0, # shape(N,), matched 3D point index or -1
-            "matches1": matches1, # shape(M,), matched 2D keypoint index or -1
-    }
+        # query descriptors
+        query_feats = all_query_feats[query]
+
+        # load pose and camera of the query
+        camera = query_cams[query] # qvec, tvec...
+
+        # extract covisibility results of the query
+        visible_p3d = covisibility_dict[query]["unique_points"]
+
+        valid_p3d = [str(p) for p in visible_p3d if str(p) in points3d_feats]
+        if not valid_p3d: 
+            print(f"WARNING: No valid visible 3d points found for {query}.")
+            continue
+
+        # load keypoints and descriptors for visible points3D 
+        current_p3d_feats = {
+            "descriptors": np.vstack([points3d_feats[p]["descriptors"] for p in valid_p3d]),
+            "keypoints": np.vstack([points3d_feats[p]["keypoints"] for p in valid_p3d]),
+            "scores": [points3d_feats[p]["scores"] for p in valid_p3d]
+        }
+
+        # reproject points3d to get GT
+        depth_map = load_depth(depth_path / f"{Path(query).stem}.h5")
+        matches0, matches1 = compute_ground_truth_matches(
+            query_feats, current_p3d_feats, camera, depth_map, reproj_thresh=3.0, depth_rel_thresh=0.1
+        )
+        # TODO: Wash data here, only keep matches > 0
+        
+        gt_data[query] = {
+                "keypoints0": query_feats["keypoints"], # shape (N,2))
+                "descriptors0": query_feats["descriptors"].T, # to shape(N,D)
+                "keypoints1": current_p3d_feats["keypoints"], # shape (M,3)
+                "descriptors1": current_p3d_feats["descriptors"],# shape(M,D)
+                "matches0": matches0, # shape(N,), matched 3D point index or -1
+                "matches1": matches1, # shape(M,), matched 2D keypoint index or -1
+        }
     
     return gt_data
 
 if __name__ == "__main__":
+
     output_dir = Path("/proj/vlarsson/outputs")
     scene_lst_path = output_dir / "splits"
     scene_names = [] 
@@ -261,7 +252,8 @@ if __name__ == "__main__":
         for name in f.readlines():
             scene_names.append(name.strip())
 
-    for scene in scene_names[-3:]:
+    for scene in scene_names:
+        scene_gt_data = {}
         query_path = output_dir / "query_sets" / scene
         query_names = query_path / "query_image_names.txt"
         query_pose = query_path / "query_image_cameras.txt"
@@ -281,28 +273,39 @@ if __name__ == "__main__":
 
         # load query pose infos
         query_cams = load_query_cams(query_pose)
-        gt_data = {}
+        
         number_matches = []
         print(f"Processing Scene {scene}")
-        query_lst_clean = []
-        for query in query_list:
-            gt_data[query] = generate_gt_for_query(
-                query, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path
-                )
-            num_matches0 = np.sum(gt_data[query]["matches0"] != -1)
-            # num_matches1 = np.sum(gt_data[query]["matches1"] != -1)
-            # number_matches.append((num_matches0, num_matches1))
-            
-            # print(f"Query {query}: Number of GT pairs: {(num_matches0, num_matches1)}")
-            if num_matches0 > 0:
-                query_lst_clean.append(query)
-        print(f"{len(query_list)} queries in total originally.")
-        print(f"{len(query_lst_clean)} queries that have GT collected.")
-        with open(query_path / "query_image_names_clean.txt", "w") as f:
-            for query_clean in query_lst_clean:
-                f.write(f"{query_clean}\n")
 
-        print(f"Clean query name saved to {query_path}  / query_image_names_clean.txt")
+        scene_gt_data = generate_gt_for_query(
+                query_list, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path
+                )
+        
+        # # Save the gt_data
+        # save_path = output_dir / "gt_results" / f"{scene}_gt.pkl"
+        # save_path.parent.mkdir(parents=True, exist_ok=True)
+        # with open(save_path, 'wb') as f:
+        #     pickle.dump(scene_gt_data, f)
+
+        # # Release the memory
+        # del scene_gt_data
+        # import gc
+        # gc.collect() 
+        # print(f"Scene {scene} saved and memory cleared.")
+        
+        # Below is for clean query list generation
+        # query_lst_clean = []
+        # for query in query_list:
+        #     num_matches0 = np.sum(scene_gt_data[query]["matches0"] != -1)
+        #     if num_matches0 > 0:
+        #         query_lst_clean.append(query)
+        # print(f"{len(query_list)} queries in total originally.")
+        # print(f"{len(query_lst_clean)} queries that have GT collected.")
+        # with open(query_path / "query_image_names_clean.txt", "w") as f:
+        #     for query_clean in query_lst_clean:
+        #         f.write(f"{query_clean}\n")
+
+        # print(f"Clean query name saved to {query_path}  / query_image_names_clean.txt")
         
 
 

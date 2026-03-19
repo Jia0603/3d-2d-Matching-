@@ -47,7 +47,7 @@ scene_names = sorted([
 ])
 scene_names.remove("0209")
 
-for scene in scene_names[76:120]: # change the slice to process more scenes
+for scene in scene_names[72:120]: # change the slice to process more scenes
     print(f"Start processing scene: {scene}...")
 
     images_path = root / scene / "images"

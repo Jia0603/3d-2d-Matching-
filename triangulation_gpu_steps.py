@@ -103,7 +103,7 @@ if __name__ == "__main__":
     semaphore = mp.Semaphore(4)
     processes = []
 
-    for scene in scene_names[96:120]:
+    for scene in scene_names[72:120]:
         p = mp.Process(target=worker, args=(scene, semaphore))
         p.start()
         processes.append(p)

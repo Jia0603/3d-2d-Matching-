@@ -108,11 +108,11 @@ if __name__ == "__main__":
     output_dir = Path("/proj/vlarsson/outputs")
     scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
     scene_names.remove("0209") # empty data set
-    for scene in scene_names[96:120]:  # change the slice to process more scenes
+    for scene in scene_names[:1]:  # change the slice to process more scenes
         extract_query_sets(scene,
                            root,
                            root.parent / "depth_undistorted",
                            output_dir / "query_sets",
-                           sample_ratio=0.0015,
+                           sample_ratio=0.003,
                            query_image_ratio=0.20)
         

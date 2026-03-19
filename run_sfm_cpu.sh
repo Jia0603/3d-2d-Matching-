@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -A berzelius-2025-319 
 #SBATCH -J sfm_hloc               
-#SBATCH -t 01-12:00:00               
+#SBATCH -t 01-00:00:00               
 #SBATCH -o log_file/sfm_cpu_step_76to120%j.log
 
 #SBATCH -p berzelius-cpu                    
