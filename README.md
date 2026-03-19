@@ -25,6 +25,7 @@ LightGlu3D/
 ├──── precompute_features.py        # Cache the averaged descriptors for 3D points
 ├── ground_truth
 ├──── generate_gt_pairs.py          # Base function to generate Ground Truth pairs, further applied as dataloader in gluefactory
+├──── generate_gt_pairs_by_scene.py # Faster
 ├── jupyter_pipeline
 ├──── 2d_3d_matching_test.ipynb
 ├──── run_2d3d_matching_visual.ipynb
@@ -33,8 +34,15 @@ LightGlu3D/
 ├──── feature_3d_compute.py         # Old experiment on projecting 3D to an image, for baseline use
 ├──── image_retrival.py             # Old experiment on projecting 3D to an image, for baseline use
 ├──── preprocessing.ipynb           # Old experiment on projecting 3D to an image, for baseline use
-├──── getBaseline.py                # Calculate the baseline based on cosine similarity of descriptors
-├── old                             # Not use, for reference only
+├──── rr_baseline.py                # RR (Rotate + Remove one coordinator)
+├──── pr_baseline.py                # PR (Projection to Reference pose) 
+├──── rn_baseline.py                # RN (Rotate + Normalization)
+├── visualization
+├──── network_weights               # The .tar file
+├──── rerun_tools.py                # Help rurun file
+├──── rerun_johanna.py              # Help rurun file
+├──── visualize_normalization.py    # Visualize the normalization of Lightglu3d
+├──── visualize_matches.py          # Visualize the predicted matches from baselines or trained model
 
 
 # Merge with Jia in Github
@@ -43,11 +51,8 @@ LightGlu3D/
 password: lsy20020409
 code: (from NSC Berzelius:x_lishu)
 
-cd matching
-cd colla_preprocess/3d-2d-Matching-
-
-cd colla_gluefactory/glue-factory-2d3d-match
-
+cd matching/colla_preprocess/3d-2d-Matching-
+cd matching/colla_gluefactory/glue-factory-2d3d-match
 
 ---
 
@@ -60,7 +65,7 @@ git checkout lsy-merged
 git config --global user.name "Shuying Liu"
 git config --global user.email "liushuying.blaise.2490@gmail.com"
 git add .
-git commit -m "Ground truth re and visualization on normalization and nn baseline."
+git commit -m "rr and pr baseline, change visualization"
 git push origin lsy-merged --force
 
 # Git operations for training
@@ -71,7 +76,7 @@ git clone https://github.com/Jia0603/glue-factory-2d3d-match.git
 ---
 
 # Get GPU
-interactive --gpus=1 -t 12:00:00
+interactive --gpus=1 -t 8:00:00
 # Get CPU (for triangulation)
 interactive -p berzelius-cpu -t 8:00:00
 # Check my use
@@ -83,19 +88,6 @@ scancel 15672530
 
 # Environment (install process in lsy-old)
 mamba activate matchenv
-
----
-
-# Preprocess
-
-# Still use 10 scenes for training, 1 scene for validation, 1 for testing
-# Change other scenes to try the pipeline
-# Train list:
-/home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean_try.txt
-# Valid list:
-/home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/valid_scenes_clean_try.txt
-# Test list:
-/home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/test_scenes_clean_try.txt
 
 ---
 
@@ -185,7 +177,6 @@ python -m feature.precompute_features \
  --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
  --scene_list /home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean_try.txt
 
-
 ---
 
 # Ground Truth
@@ -211,8 +202,12 @@ ls /proj/vlarsson/users/x_lishu/colla_matching/outputs/feature
 
 # Train
 
-python -m gluefactory.train lightglue_3d_experiment_v1     --conf gluefactory/configs/lightglu3d.yaml
+# Train with a adaptor MLP
+# Only train on adaptor MLP, position, Last two layers of Lightglue
+python -m gluefactory.train lightglue_adapt_v2     --conf gluefactory/configs/2d_3d_lightglue_SP_finetune.yaml
 
+# Tensorboard
+tensorboard --logdir ~/matching/colla_gluefactory/glue-factory-2d3d-match/outputs/training/lightglue_adapt_v2 --port 6008
 
 ---
 
@@ -223,101 +218,68 @@ python -m gluefactory.run_nn_baseline_grid
 python -m gluefactory.run_nn_baseline
 
 # RR baseline
-
-python -m baseline.rr_baseline \
- --dataset  /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
- --covisibility_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
- --query_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
- --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
- --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
- --scene_list /home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/test_scenes_clean.txt
-
 python -m baseline.rr_baseline \
  --dataset  /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
  --covisibility_dir  /proj/vlarsson/outputs/midterm_results \
  --query_dir  /proj/vlarsson/outputs/query_sets \
  --sfm_dir  /proj/vlarsson/outputs/sfm \
  --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
- --scene_list /home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/valid_scenes_clean.txt
+ --scene_list /proj/vlarsson/outputs/splits/test.txt
 
 # PR baseline
-
-python -m baseline.pr_baseline \
- --dataset  /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
- --covisibility_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
- --query_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
- --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
- --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
- --scene_list /home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/test_scenes_clean.txt
-
 python -m baseline.pr_baseline \
  --dataset  /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
  --covisibility_dir /proj/vlarsson/outputs/midterm_results \
  --query_dir /proj/vlarsson/outputs/query_sets \
  --sfm_dir /proj/vlarsson/outputs/sfm \
  --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
- --scene_list /home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/valid_scenes_clean.txt
+ --scene_list /proj/vlarsson/outputs/splits/test.txt
 
-
-
-
----
-
-
-# Validation file
-ls /proj/vlarsson/outputs/splits/
-/proj/vlarsson/outputs/splits/val_48.txt
-/proj/vlarsson/outputs/splits/val_72.txt
-/proj/vlarsson/outputs/splits/val.txt
-
-
-(lg_env) [x_jiagu@berzelius1 splits]$ ls -la
-total 5
-drwxrwxr-x 2 x_jiagu x_jiagu 4096 Mar 11 08:59 .
-drwxrwxr-x 2 x_jiagu x_jiagu 4096 Feb 11 18:29 ..
--rw-rw-r-- 1 x_jiagu x_jiagu   25 Mar 11 08:58 test_48.txt
--rw-rw-r-- 1 x_jiagu x_jiagu   35 Mar 11 08:59 test_72.txt
--rw-rw-r-- 1 x_jiagu x_jiagu   10 Mar  4 11:40 test.txt
--rw-rw-r-- 1 x_jiagu x_jiagu  170 Mar 11 08:58 train_48.txt
--rw-rw-r-- 1 x_jiagu x_jiagu  250 Mar 11 08:59 train_72.txt
--rw-rw-r-- 1 x_jiagu x_jiagu   90 Mar  4 11:40 train.txt
--rw-rw-r-- 1 x_jiagu x_jiagu   45 Mar 11 08:58 val_48.txt
--rw-rw-r-- 1 x_jiagu x_jiagu   75 Mar 11 08:59 val_72.txt
--rw-rw-r-- 1 x_jiagu x_jiagu   20 Mar  4 11:40 val.txt
+# RN baselin
+python -m baseline.rn_baseline \
+ --dataset  /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+ --covisibility_dir  /proj/vlarsson/outputs/midterm_results \
+ --query_dir  /proj/vlarsson/outputs/query_sets \
+ --sfm_dir  /proj/vlarsson/outputs/sfm \
+ --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
+ --scene_list /proj/vlarsson/outputs/splits/test.txt
 
 ---
 
 # Visualization
 
+# Visulaization of normalization
 python -m visualization.visualize_normalization \
   --outputs /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
   --query_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
   --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
   --scene 0022
 
-python -m visualization.visualize_nn_matches \
+# Visulization of matches
+python -m visualization.visualize_matches \
  --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
- --covisibility_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
- --query_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
- --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
+ --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+ --query_dir  /proj/vlarsson/outputs/query_sets \
+ --sfm_dir  /proj/vlarsson/outputs/sfm \
  --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
- --scene 0022
+ --scene 0022 \
+ --method {change the method here}
 
-python -m visualization.visualize_rr_matches \
+# Visualize training
+# Chnage this to add the custom path before visualizing TRAIN
+export PYTHONPATH="/home/x_lishu/matching/colla_gluefactory/glue-factory-2d3d-match:$PYTHONPATH"
+# Put the .tar file into visulization.network_weights folder
+python -m visualization.visualize_matches \
  --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
- --covisibility_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
- --query_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
- --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
+ --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+ --query_dir  /proj/vlarsson/outputs/query_sets \
+ --sfm_dir  /proj/vlarsson/outputs/sfm \
  --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
- --scene 0022
+ --scene 0022 \
+ --method TRAIN \
+ --checkpoint /home/x_lishu/matching/colla_preprocess/3d-2d-Matching-/visualization/network_weights/checkpoint_best_clean.tar
 
-python -m visualization.visualize_pr_matches \
- --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
- --covisibility_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
- --query_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
- --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
- --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
- --scene 0022
+
 
 
 

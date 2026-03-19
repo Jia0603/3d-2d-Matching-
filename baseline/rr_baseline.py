@@ -84,7 +84,7 @@ def main():
     
     # Initialize LightGlue
     logger.info("Initializing LightGlue...")
-    matcher = LightGlue(features="superpoint").eval().to(device)
+    matcher = LightGlue(features='superpoint', depth_confidence=-1, width_confidence=-1).eval().to(device)
 
     # Load test scene list
     with open(args.scene_list, 'r') as f:
@@ -98,7 +98,7 @@ def main():
         logger.info(f"Starting RR Baseline Evaluation for Scene {scene}...")
         
         # Load query
-        query_names_file = args.query_dir / scene / "query_image_names.txt"
+        query_names_file = args.query_dir / scene / "query_image_names_clean.txt"
         with open(query_names_file, 'r') as f:
             queries = [line.strip() for line in f if line.strip()]
         
