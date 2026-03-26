@@ -3,6 +3,9 @@
 #               RN(Rotate+Normalize), PR(Project to Reference)
 # For train: TRAIN
 
+# Before use it, add the gluefactory path in the terminal
+# export PYTHONPATH="/home/x_lishu/matching/colla_gluefactory/glue-factory-2d3d-match:$PYTHONPATH"
+
 import argparse
 import logging
 import pickle
