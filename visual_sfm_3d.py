@@ -51,7 +51,7 @@ def visualize_single_covisibility(
         sfm_dir: Path, 
         scene: str, 
         covisibility_results: dict, 
-        query_cameras: dict,
+        query_camera: dict,
         query_name: str, 
         html_dir: Path, 
         save_html: bool = True
@@ -60,14 +60,14 @@ def visualize_single_covisibility(
     # Visualize the full SfM model first
     fig, reconstruction = visualize_sfm_3d(sfm_dir, scene, html_dir, save_html=False)
 
-    if query_name not in covisibility_results:
-        raise ValueError(f"{query_name} not found in covisibility_results")
-    data = covisibility_results[query_name]
+    # if query_name not in covisibility_results:
+    #     raise ValueError(f"{query_name} not found in covisibility_results")
+    # data = covisibility_results[query_name]
 
     # Color visiable 3D points as red
     xs, ys, zs = [], [], []
 
-    for pid in data['unique_points']:
+    for pid in covisibility_results['unique_points']:
         pid = int(pid)
         if pid in reconstruction.points3D:
             xyz = reconstruction.points3D[pid].xyz
@@ -84,7 +84,7 @@ def visualize_single_covisibility(
     # Color reference images as blue
     cam_x, cam_y, cam_z = [], [], []
 
-    for img_id in data['unique_images']:
+    for img_id in covisibility_results['unique_images']:
         img_id = int(img_id)
         if img_id in reconstruction.images:
             image = reconstruction.images[img_id]
@@ -101,22 +101,22 @@ def visualize_single_covisibility(
         )
     
     # Color query image as green if query_cameras provided
-    if query_cameras:
-        if query_name not in query_cameras:
-            raise ValueError(f"{query_name} not found in query_cameras")
-        else:
-            query_info = query_cameras[query_name]
-            R = qvec2rotmat(query_info["qvec"])
-            cam_center = -R.T @ query_info["tvec"]
+    if query_camera:
+        # if query_name not in query_cameras:
+        #     raise ValueError(f"{query_name} not found in query_cameras")
+        # else:
+        # query_info = query_cameras[query_name]
+        R = qvec2rotmat(query_camera["qvec"])
+        cam_center = -R.T @ query_camera["tvec"]
             
-            fig.add_scatter3d(
-                x=[cam_center[0]],
-                y=[cam_center[1]],
-                z=[cam_center[2]],
-                mode='markers',
-                marker=dict(size=12, color='green'),
-                name="Query Camera"
-            )
+        fig.add_scatter3d(
+            x=[cam_center[0]],
+            y=[cam_center[1]],
+            z=[cam_center[2]],
+            mode='markers',
+            marker=dict(size=12, color='green'),
+            name="Query Camera"
+        )
 
     if save_html:
         html_path = html_dir / f"viz_{scene}_{query_name}.html"

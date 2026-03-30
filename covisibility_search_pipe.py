@@ -6,12 +6,12 @@ from pathlib import Path
 import pickle
 from utils import map_img_to_points3d, map_img_name_to_id, qvec2rotmat
 
-def most_similar_pair(reference_dir, query_dir, output_dir):
+def most_similar_pair(reference_dir, query_dir, query_list, output_dir, num_sim_img=1):
     '''
     Finds the most similar image in the reference directory for each query in the query dir.
     '''
     ref_list = output_dir / "reference_list.txt"
-    query_list = output_dir.parent.parent / "query_sets" / output_dir.name / "query_image_names.txt"
+    # query_list = output_dir.parent.parent / "query_sets" / output_dir.name / "query_image_names.txt"
     # query_list = output_dir / "query_list.txt"
     # TODO: training stage read all queries from dataset, uncomment this when inference
 
@@ -72,7 +72,7 @@ def most_similar_pair(reference_dir, query_dir, output_dir):
         descriptors=queries_features,
         db_descriptors=references_features,     
         output=pair_file,               
-        num_matched=1,                   
+        num_matched=num_sim_img,                   
         query_list=query_list,        
         db_list=ref_list,            
     )
@@ -97,7 +97,7 @@ def covisibility_search(
     points3D: dict,
     camera_pos: np.ndarray = np.array([0,0,0]),
     pruning: float = 0.5,
-    max_points: int = 10000,
+    max_points: int = 8192,
 ) -> tuple:
     """
     Conducts covisibility search through bipartite PR.
@@ -174,7 +174,7 @@ def covisibility_search(
             max_distance=distance
             
         if len(unique_points) >= max_points:
-            # Limit the number of unique points to 10000 for efficiency
+            # Limit the number of unique points to max_points for efficiency
             expansion_points = list(unique_points - set(points3d_level))
             buffer = max_points - len(points3d_level)
             if buffer > 0:
@@ -215,6 +215,7 @@ if __name__ == "__main__":
         matched_pairs_dict = most_similar_pair(
             reference_dir=images_path,
             query_dir=images_path,
+            query_list = output_dir.parent.parent / "query_sets" / output_dir.name / "query_image_names.txt",
             output_dir=output_dir
         )
 

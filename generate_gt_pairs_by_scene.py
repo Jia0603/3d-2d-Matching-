@@ -7,6 +7,7 @@ from scipy.spatial import cKDTree
 import torch
 import torch.nn.functional as F
 import torch
+import matplotlib.pyplot as plt
 torch.set_num_threads(1)
 
 def load_query_cams(query_pose_path):
@@ -148,11 +149,14 @@ def compute_ground_truth_matches(
     # Query the tree for the nearest 2D keypoint to each projected 3D point
     # distance_upper_bound acts as an instant cutoff mask (reproj_thresh)
     dists, min_indices = tree.query(projected, distance_upper_bound=reproj_thresh)
-        
-    # Iterate over the valid results and assign matches
-    for idx3d, min_idx, dist in zip(valid_indices, min_indices, dists):
+    
+    sort_idx = np.argsort(dists)
+    
+    for i in sort_idx: # always first process the closest ones
+        min_idx = min_indices[i] 
+        idx3d = valid_indices[i]
         # cKDTree returns len(kpts2d) if no neighbor was found within the threshold
-        if min_idx < N2D: 
+        if min_idx < N2D:
             if matches0[min_idx] == -1:
                 matches0[min_idx] = idx3d
                 matches1[idx3d] = min_idx
@@ -164,7 +168,9 @@ def load_depth(depth_path):
         depth = f['depth'][:]
     return depth
 
-def generate_gt_for_query(query_list, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path):
+def generate_gt_for_query_list(
+        query_list, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path, reproj_thresh=3.0, depth_rel_thresh=0.1
+        ):
     # extract SP keypoints descriptors of all the queries in one scene
     all_query_feats = {}
     query_set = set(query_list)
@@ -222,7 +228,7 @@ def generate_gt_for_query(query_list, feats_2d_path, feats_3d_path, query_cams, 
         # reproject points3d to get GT
         depth_map = load_depth(depth_path / f"{Path(query).stem}.h5")
         matches0, matches1 = compute_ground_truth_matches(
-            query_feats, current_p3d_feats, camera, depth_map, reproj_thresh=3.0, depth_rel_thresh=0.1
+            query_feats, current_p3d_feats, camera, depth_map, reproj_thresh, depth_rel_thresh
         )
         # TODO: Wash data here, only keep matches > 0
         
@@ -239,6 +245,8 @@ def generate_gt_for_query(query_list, feats_2d_path, feats_3d_path, query_cams, 
 
 if __name__ == "__main__":
 
+    reproj_thresh=5.0
+    depth_rel_thresh=0.1
     output_dir = Path("/proj/vlarsson/outputs")
     scene_lst_path = output_dir / "splits"
     scene_names = [] 
@@ -251,7 +259,7 @@ if __name__ == "__main__":
     with open(scene_lst_path / "test.txt", "r") as f:
         for name in f.readlines():
             scene_names.append(name.strip())
-
+    all_ratios = []
     for scene in scene_names:
         scene_gt_data = {}
         query_path = output_dir / "query_sets" / scene
@@ -277,8 +285,8 @@ if __name__ == "__main__":
         number_matches = []
         print(f"Processing Scene {scene}")
 
-        scene_gt_data = generate_gt_for_query(
-                query_list, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path
+        scene_gt_data = generate_gt_for_query_list(
+                query_list, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path, reproj_thresh, depth_rel_thresh
                 )
         
         # # Save the gt_data
@@ -294,18 +302,52 @@ if __name__ == "__main__":
         # print(f"Scene {scene} saved and memory cleared.")
         
         # Below is for clean query list generation
-        # query_lst_clean = []
-        # for query in query_list:
-        #     num_matches0 = np.sum(scene_gt_data[query]["matches0"] != -1)
-        #     if num_matches0 > 0:
-        #         query_lst_clean.append(query)
-        # print(f"{len(query_list)} queries in total originally.")
-        # print(f"{len(query_lst_clean)} queries that have GT collected.")
-        # with open(query_path / "query_image_names_clean.txt", "w") as f:
-        #     for query_clean in query_lst_clean:
-        #         f.write(f"{query_clean}\n")
+        query_lst_clean = []
+        for query in query_list:
+            matches = scene_gt_data[query]["matches0"]
+            num_matches0 = np.sum(matches != -1)
+            ratio = num_matches0 / np.shape(matches)[0]
+            if ratio >= 0.1:
+                query_lst_clean.append(query)
+        print(f"{len(query_list)} queries in total originally.")
+        print(f"{len(query_lst_clean)} queries that have over 10% GT collected.")
+        with open(query_path / "query_image_names_clean.txt", "w") as f:
+            for query_clean in query_lst_clean:
+                f.write(f"{query_clean}\n")
 
-        # print(f"Clean query name saved to {query_path}  / query_image_names_clean.txt")
+        print(f"Clean query name saved to {query_path}  / query_image_names_clean.txt")
+
+        # Below is to compute the distribution of matchable GT pairs
+        # query_50_100 = []
+        # for query in query_list:
+        #     matches = scene_gt_data[query]["matches0"]
+        #     num_matches0 = np.sum(matches != -1)
+        #     ratio = num_matches0 / np.shape(matches)[0]
+        #     all_ratios.append(ratio)
+        #     if ratio >= 0.5:
+        #         query_50_100.append(query)
+        # print(f"{len(query_list)} queries in total originally.")
+        # print(f"{len(query_50_100)} queries that have over 50% overlap ratio collected.")
+        # with open(query_path / "query_image_names_50_100.txt", "w") as f:
+        #     for q in query_50_100:
+        #         f.write(f"{q}\n")
         
+    # plt.figure(figsize=(10, 6))
+    # bins = np.arange(0, 1.1, 0.1) 
+
+    # plt.hist(all_ratios, bins=bins, edgecolor='black', alpha=0.7)
+
+    # plt.title('Distribution of Matchable GT Pairs Ratio (All Scenes)')
+    # plt.xlabel('Match Ratio (num_matches0 / number of keypoints)')
+    # plt.ylabel('Number of Queries')
+    # plt.xticks(bins)
+    # plt.grid(axis='y', linestyle='--', alpha=0.7)
+
+    # plt.savefig('match_ratio_distribution_all_scenes_reproj_thresh_5.png')
+    # plt.show()
+
+    # print(f"Total queries processed: {len(all_ratios)}")
+    # print(f"Average ratio: {np.mean(all_ratios):.4f}")
+
 
 
