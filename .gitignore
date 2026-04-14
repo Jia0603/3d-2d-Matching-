@@ -13,4 +13,4 @@ log_file/
 
 # ignore debug files
 debug_h5.py
-count_depth_num.py
+count_depth_num.pyvisualization/network_weights/*.tar
