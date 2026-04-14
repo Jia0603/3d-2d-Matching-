@@ -65,24 +65,32 @@ git checkout lsy-merged
 git config --global user.name "Shuying Liu"
 git config --global user.email "liushuying.blaise.2490@gmail.com"
 git add .
-git commit -m "rr and pr baseline, change visualization"
+git commit -m "pose estimation and changed hloc pipeline"
 git push origin lsy-merged --force
 
 # Git operations for training
 # git init
+# git clone https://github.com/Jia0603/glue-factory-2d3d-match.git
+git pull
+git config --global user.name "Shuying Liu"
+git config --global user.email "liushuying.blaise.2490@gmail.com"
+git add .
+git commit -m ""
+git push
 
-git clone https://github.com/Jia0603/glue-factory-2d3d-match.git
 
 ---
 
 # Get GPU
-interactive --gpus=1 -t 8:00:00
+interactive --gpus=1 -t 4:00:00
 # Get CPU (for triangulation)
 interactive -p berzelius-cpu -t 8:00:00
 # Check my use
 squeue -u x_lishu
 # cancel resource
-scancel 15672530
+scancel 15915922
+# Check disk storage
+nscquota
 
 ---
 
@@ -167,15 +175,25 @@ python -m covisibility.covisibility_search_pipe_re \
  --query_list  /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
  --scene 0022
 
+# Covisibility process for Aachen dataset
+python -m covisibility.covisibility_search_pipe_aachen \
+ --dataset /proj/vlarsson/datasets/aachen_v1.1 \
+ --outputs /proj/vlarsson/outputs_aachen/covisibility \
+ --sfm_dir /proj/vlarsson/outputs_aachen/sfm \
+ --query list /proj/vlarsson/datasets/aachen_v1.1/queries
+
 ---
 
 # Feature computation
 
-python -m feature.precompute_features \
+python -m feature.precompute_features_re \
  --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
  --outputs /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
  --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
  --scene_list /home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean_try.txt
+
+# Feature computation for Aachen
+python -m feature.precompute_features_aachen
 
 ---
 
@@ -193,6 +211,15 @@ python -m ground_truth.generate_gt_pairs_re \
  --query_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/query \
  --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
  --feature_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/covisibility \
+ --scene 0022
+
+# Soft threshold
+# Defult 
+python -m ground_truth.generate_gt_pairs_soft \
+ --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
+ --query_dir /proj/vlarsson/outputs/query_sets \
+ --sfm_dir /proj/vlarsson/outputs/sfm \
+ --feature_dir /proj/vlarsson/outputs/midterm_results \
  --scene 0036
 
 # output
@@ -204,10 +231,14 @@ ls /proj/vlarsson/users/x_lishu/colla_matching/outputs/feature
 
 # Train with a adaptor MLP
 # Only train on adaptor MLP, position, Last two layers of Lightglue
+# v1: only adaptor and position
+# v2: adaptor, position and two last layers, lr = 1e-4
 python -m gluefactory.train lightglue_adapt_v2     --conf gluefactory/configs/2d_3d_lightglue_SP_finetune.yaml
+# v3: adaptor, position and two last layers, soft threshould on gt, lr = 1e-5
+python -m gluefactory.train lightglue_adapt_v3     --conf gluefactory/configs/2d_3d_lightglue_adapt_SP_finetune.yaml
 
 # Tensorboard
-tensorboard --logdir ~/matching/colla_gluefactory/glue-factory-2d3d-match/outputs/training/lightglue_adapt_v2 --port 6008
+tensorboard --logdir ~/matching/colla_gluefactory/glue-factory-2d3d-match/outputs/training/lightglue_adapt_v3 --port 6008
 
 ---
 
@@ -265,6 +296,16 @@ python -m visualization.visualize_matches \
  --scene 0022 \
  --method {change the method here}
 
+python -m visualization.visualize_matches \
+ --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+ --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+ --query_dir  /proj/vlarsson/outputs/query_sets \
+ --sfm_dir  /proj/vlarsson/outputs/sfm \
+ --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
+ --scene 0022 \
+ --method ADAPT \
+ --checkpoint /home/x_lishu/matching/colla_preprocess/3d-2d-Matching-/visualization/network_weights/checkpoint_best_adapt.tar
+
 # Visualize training
 # Chnage this to add the custom path before visualizing TRAIN
 export PYTHONPATH="/home/x_lishu/matching/colla_gluefactory/glue-factory-2d3d-match:$PYTHONPATH"
@@ -279,6 +320,75 @@ python -m visualization.visualize_matches \
  --method TRAIN \
  --checkpoint /home/x_lishu/matching/colla_preprocess/3d-2d-Matching-/visualization/network_weights/checkpoint_best_clean.tar
 
+# Visualize ground truth = 0
+# Before becasue added the extra line so it will collapse
+python -m visualization.visualize_no_gt \
+  --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+  --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+  --query_dir  /proj/vlarsson/outputs/query_sets \
+  --sfm_dir  /proj/vlarsson/outputs/sfm \
+  --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
+  --scene 0022
+
+# Visualize abnormal superpoint keypoints
+python -m visualization.visualize_2d_keypoint \
+  --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+  --query_dir /proj/vlarsson/outputs/query_sets \
+  --scene 0022
+
+# Visualize ground truth with soft threshold
+python -m visualization.visualize_gt \
+  --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+  --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+  --query_dir  /proj/vlarsson/outputs/query_sets \
+  --sfm_dir  /proj/vlarsson/outputs/sfm \
+  --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
+  --scene 0022
+
+# Visualization of pose estimation
+python -m visualization.visualize_pose_estimation \
+ --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+ --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+ --query_dir  /proj/vlarsson/outputs/query_sets \
+ --sfm_dir  /proj/vlarsson/outputs/sfm \
+ --scene 0022 \
+ --method NN \
+ --max_error 12
+
+---
+
+# Estimation
+# Change this to add the custom path before visualizing TRAIN
+export PYTHONPATH="/home/x_lishu/matching/colla_gluefactory/glue-factory-2d3d-match:$PYTHONPATH"
+
+python -m evaluation.pose_estimation \
+ --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+ --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+ --query_dir  /proj/vlarsson/outputs/query_sets \
+ --sfm_dir  /proj/vlarsson/outputs/sfm \
+ --scene_list /proj/vlarsson/outputs/splits/val.txt \
+ --method RR \
+ --max_error 12 
+
+python -m evaluation.pose_estimation \
+ --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+ --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+ --query_dir  /proj/vlarsson/outputs/query_sets \
+ --sfm_dir  /proj/vlarsson/outputs/sfm \
+ --scene_list /proj/vlarsson/outputs/splits/val.txt \
+ --method TRAIN \
+ --checkpoint /home/x_lishu/matching/colla_preprocess/3d-2d-Matching-/visualization/network_weights/checkpoint_best.tar
+
+python -m evaluation.pose_estimation \
+ --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+ --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+ --query_dir  /proj/vlarsson/outputs/query_sets \
+ --sfm_dir  /proj/vlarsson/outputs/sfm \
+ --scene_list /proj/vlarsson/outputs/splits/val.txt \
+ --method HLOC \
+ --max_error 6 
+
+# Use Aachen for proper pose estimation, because magadepth dataset has unsure unit for transition
 
 
 

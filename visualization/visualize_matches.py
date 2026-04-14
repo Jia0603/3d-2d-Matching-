@@ -1,7 +1,8 @@
 # Visualize matches.
 # For baseline: NN(Nearest Neighbour), RR(Rotate+Remove_coord), 
 #               RN(Rotate+Normalize), PR(Project to Reference)
-# For train: TRAIN
+# For train: TRAIN(Lightglu3d two self and one bidirectional cross), 
+#            ADAPT(lightglue+adapter)
 
 # Before use it, add the gluefactory path in the terminal
 # export PYTHONPATH="/home/x_lishu/matching/colla_gluefactory/glue-factory-2d3d-match:$PYTHONPATH"
@@ -70,10 +71,8 @@ def compute_nn_baseline(q_desc, p3d_desc, device):
     pred_matches0 = pred['matches0'][0].cpu().numpy() 
     return pred_matches0
 
-def compute_trained_lightglu3d(q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, checkpoint_path, device):
+def load_trained_lightglu3d(checkpoint_path, device):
     logger.info(f"Loading trained LightGlu3D from {checkpoint_path}...")
-    
-    # Define the config
     conf = {
         "name": "lightglu3d_bicross", 
         "input_dim": 256, 
@@ -88,17 +87,34 @@ def compute_trained_lightglu3d(q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, c
         "filter_threshold": 0.0, 
         "checkpointed": False,
     }
-    
     matcher = LightGlu3D(conf).eval().to(device)
-    
-    # Load the trained checkpoint
     checkpoint = torch.load(checkpoint_path, map_location=device)
     state_dict = checkpoint.get("model", checkpoint) 
-    
-    # Load the weights
     matcher.load_state_dict(state_dict, strict=False)
-    
-    # Format the data dictionary
+    return matcher
+
+def load_trained_adapt(checkpoint_path, device):
+    logger.info(f"Loading trained Adapter from {checkpoint_path}...")
+    conf = {
+        "name": "lightglue_adapt", 
+        "input_dim": 256, 
+        "descriptor_dim": 256,
+        "n_layers": 9,
+        "num_heads": 4,
+        "flash": False,
+        "mp": False, 
+        "depth_confidence": -1, 
+        "width_confidence": -1, 
+        "filter_threshold": 0.0, 
+        "checkpointed": False,
+    }
+    matcher = get_model(conf["name"])(conf).eval().to(device)
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    state_dict = checkpoint.get("model", checkpoint) 
+    matcher.load_state_dict(state_dict, strict=False)
+    return matcher
+
+def compute_trained_lightglu3d(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device):
     data = {
         "keypoints0": torch.from_numpy(q_kpts).unsqueeze(0).float().to(device),
         "keypoints1": torch.from_numpy(p3d_kpts).unsqueeze(0).float().to(device),
@@ -108,20 +124,18 @@ def compute_trained_lightglu3d(q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, c
             "image_size": torch.tensor([q_img_size]).float().to(device)
         }
     }
-
-    # Predict
     with torch.no_grad():
         pred = matcher(data)
     
-    pred_matches0 = pred['matches0'][0].cpu().numpy() 
-    return pred_matches0
+    return pred['matches0'][0].cpu().numpy()
 
 
-def launch_rerun_visualization(pred_matches0, gt_matches0, q_kpts, p3d_kpts, raw_pts_np, raw_colors_np, scene, args, query_name, ref_name, camera, ref_pose_matrix, method_name="Baseline"):
+def launch_rerun_visualization(pred_matches0, gt_matches0, q_kpts, p3d_kpts, raw_pts_np, raw_colors_np, scene, args, query_name, ref_name, camera, ref_pose_matrix, method_name="Baseline", est_pose_matrix=None):
     logger.info(f"Initializing Rerun Analytics Dashboard for {method_name}...")
     
     # Initialize rerun
-    rr.init(f"Matches_Scene_{scene}_{method_name}", spawn=False)
+    query_stem = Path(query_name).stem
+    rr.init(f"Matches_Scene_{scene}_{method_name}_{query_stem}", spawn=False)
 
     # Calculate matches info using the generic 'pred_matches0'
     valid_pred = pred_matches0 > -1
@@ -197,7 +211,7 @@ def launch_rerun_visualization(pred_matches0, gt_matches0, q_kpts, p3d_kpts, raw
     rr.log("world/Ground_Truth/Missed/Lines", rr.LineStrips3D(missed_lines, colors=[0, 150, 255, 80]))
 
     # Save .rrd file
-    output_filename = f"visualization_scene_{scene}_{method_name}.rrd"
+    output_filename = f"viz_{scene}_{method_name}_{query_stem}.rrd"
     rr.save(output_filename)
     logger.info(f"Rerun .rrd file visualization saved to {output_filename}")
 
@@ -272,10 +286,10 @@ def main():
     parser.add_argument('--sfm_dir', type=Path, required=True, help="Path to sfm outputs")
     parser.add_argument('--depth_dir', type=Path, required=True, help="Path to depth maps")
     parser.add_argument('--scene', type=str, required=True)
-    parser.add_argument('--method', type=str, required=True, choices=['NN', 'RR', 'RN', 'PR', 'TRAIN'], 
-                        help="Matching method to evaluate: NN, RR, RN, PR, or TRAIN")
+    parser.add_argument('--method', type=str, required=True, choices=['NN', 'RR', 'RN', 'PR', 'TRAIN', 'ADAPT'], 
+                        help="Matching method to evaluate: NN, RR, RN, PR, TRAIN or ADAPT")
     parser.add_argument('--checkpoint', type=str, default=None, 
-                        help="Path to trained network weights (Only required if method is TRAIN)")
+                        help="Path to trained network weights (Only required if method is TRAIN or ADAPT)")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -348,6 +362,12 @@ def main():
     if method in ["RR", "RN", "PR"]:
         logger.info("Initializing standard LightGlue for baseline evaluation...")
         baseline_matcher = LightGlue(features='superpoint', depth_confidence=-1, width_confidence=-1).eval().to(device)
+    if method == "TRAIN":
+        logger.info("Loaded trained LightGlu3D model for evaluation...")
+        lightglu3d_matcher = load_trained_lightglu3d(args.checkpoint, device)
+    if method == "ADAPT":
+        logger.info("Loaded trained LightGlue_Adapt model for evaluation...")
+        lightglu3_adapt_matcher = load_trained_adapt(args.checkpoint, device)
 
     # Get the predected mathces
     if method == "NN":
@@ -367,11 +387,11 @@ def main():
     elif method == "TRAIN":
         if args.checkpoint is None:
             raise ValueError("--checkpoint must be provided when using the TRAIN method.")
-        pred_matches0 = compute_trained_lightglu3d(
-            q_kpts, q_desc, q_img_size, 
-            p3d_kpts, p3d_desc, 
-            args.checkpoint, device
-        )
+        pred_matches0 = compute_trained_lightglu3d(lightglu3d_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+    elif method == "ADAPT":
+        if args.checkpoint is None:
+            raise ValueError("--checkpoint must be provided when using the ADAPT method.")
+        pred_matches0 = compute_trained_lightglu3d(lightglu3_adapt_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
     
     # Evaluate metrics
     valid_pred = pred_matches0 > -1
