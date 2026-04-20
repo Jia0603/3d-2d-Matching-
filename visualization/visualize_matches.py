@@ -1,4 +1,3 @@
-# Visualize matches.
 # For baseline: NN(Nearest Neighbour), RR(Rotate+Remove_coord), 
 #               RN(Rotate+Normalize), PR(Project to Reference)
 # For train: TRAIN(Lightglu3d two self and one bidirectional cross), 
@@ -84,7 +83,7 @@ def load_trained_lightglu3d(checkpoint_path, device):
         "mp": False, 
         "depth_confidence": -1, 
         "width_confidence": -1, 
-        "filter_threshold": 0.0, 
+        "filter_threshold": 0.1, 
         "checkpointed": False,
     }
     matcher = LightGlu3D(conf).eval().to(device)
@@ -105,7 +104,7 @@ def load_trained_adapt(checkpoint_path, device):
         "mp": False, 
         "depth_confidence": -1, 
         "width_confidence": -1, 
-        "filter_threshold": 0.0, 
+        "filter_threshold": 0.1, 
         "checkpointed": False,
     }
     matcher = get_model(conf["name"])(conf).eval().to(device)

@@ -246,14 +246,14 @@ def process_scene(scene_path: Path, args):
                 'max_distance': max_distance
             }
 
-    # Print Clean Summary to Console
+    # Print summary
     if point_counts:
         logger.info(f"Covisibility Summary for {scene_name}")
-        logger.info(f"  Target Point Limitation: {args.max_points}")
-        logger.info(f"  Smallest 3D Pointcloud:  {np.min(point_counts)}")
-        logger.info(f"  Largest 3D Pointcloud:   {np.max(point_counts)}")
-        logger.info(f"  Average 3D Pointcloud:   {np.mean(point_counts):.2f}")
-        logger.info(f"  (Detailed results saved to: {log_file_path}")
+        logger.info(f"Target Point Limitation: {args.max_points}")
+        logger.info(f"Smallest 3D Pointcloud:  {np.min(point_counts)}")
+        logger.info(f"Largest 3D Pointcloud:   {np.max(point_counts)}")
+        logger.info(f"Average 3D Pointcloud:   {np.mean(point_counts):.2f}")
+        logger.info(f"(Detailed results saved to: {log_file_path})")
     logger.info(f"Finished covisibility search for scene: {scene_name}.")
 
     # Save covisibility_results

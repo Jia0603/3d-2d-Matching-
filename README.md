@@ -3,11 +3,6 @@
 # File structure
 
 LightGlu3D/
-├── __pycache__
-├──── extract_query_set.cpython-310.pyc
-├──── generate_gt_pairs.cpython-310.pyc
-├──── triangular_hloc.cpython-310.pyc
-├──── visual_sfm_3d.cpython-310.pyc
 ├── split_query_ref
 ├──── extract_query_sets.py         # Split images into queries and references
 ├── triangulation
@@ -15,34 +10,45 @@ LightGlu3D/
 ├──── run_sfm_gpu.sh                # Shell script to run sbatch GPU job
 ├──── triangulation_cpu_steps.py    # Triangulate and visualize SfM models (CPU)
 ├──── triangulation_gpu_steps.py    # Feature extraction & matching (GPU)
-├──── utils.py                      # Utility functions
 ├──── view_3d_rotate.py
 ├──── visual_sfm_3d.py              # The visualization ply and html files
 ├── covisibility
 ├──── covisibility_search_pipe.py   # Filter block for query-relevant 3D points and references
 ├──── check_covisibility_thres.py
+├──── covisibility_search_pipe_aachen.py # Change because of the different structure for Aachen dataset
 ├── feature
 ├──── precompute_features.py        # Cache the averaged descriptors for 3D points
+├──── precompute_features_aachen.py # Change because of the different structure for Aachen dataset
 ├── ground_truth
 ├──── generate_gt_pairs.py          # Base function to generate Ground Truth pairs, further applied as dataloader in gluefactory
 ├──── generate_gt_pairs_by_scene.py # Faster
-├── jupyter_pipeline
-├──── 2d_3d_matching_test.ipynb
-├──── run_2d3d_matching_visual.ipynb
-├──── run_sfm_visualization.ipynb   # Notebook for SfM visualization (pre/post search)
 ├── baseline
-├──── feature_3d_compute.py         # Old experiment on projecting 3D to an image, for baseline use
-├──── image_retrival.py             # Old experiment on projecting 3D to an image, for baseline use
-├──── preprocessing.ipynb           # Old experiment on projecting 3D to an image, for baseline use
 ├──── rr_baseline.py                # RR (Rotate + Remove one coordinator)
 ├──── pr_baseline.py                # PR (Projection to Reference pose) 
 ├──── rn_baseline.py                # RN (Rotate + Normalization)
+├──── feature_3d_compute_old.py     # Old experiment on projecting 3D to an image, for baseline use
+├──── image_retrieval.py            # Old experiment on projecting 3D to an image, for baseline use
+├──── preprocessing.ipynb           # Old experiment on projecting 3D to an image, for baseline use
 ├── visualization
-├──── network_weights               # The .tar file
 ├──── rerun_tools.py                # Help rurun file
 ├──── rerun_johanna.py              # Help rurun file
 ├──── visualize_normalization.py    # Visualize the normalization of Lightglu3d
 ├──── visualize_matches.py          # Visualize the predicted matches from baselines or trained model
+├──── visualize_no_gt.py            # Visualize the matches with GT = 0, to check the false positives
+├──── visualize_gt.py               # Visualize the GT matches with soft threshold, to check the effect of soft threshold
+├──── visualize_2d_keypoint.py      # Visualize the 2D keypoints, to check the abnormal keypoints
+├──── visualize_pose_estimation.py  # Visualize the pose estimation results of Megadeth
+├── evaluation
+├──── pose_estimation.py            # Evaluate the pose estimation results on Megadepth
+├──── pose_estimation_cambridge.py  # Evaluate the pose estimation results on Cambridge
+├──── pose_estimation_aachen.py     # Evaluate the pose estimation results on Aachen
+├──── hloc_aachen_pipeline.py       # Run the original HLOC pipeline on Aachen dataset to get the reference file
+├──utils
+├──── utils.py
+├── jupyter_pipeline
+├──── 2d_3d_matching_test.ipynb
+├──── run_2d3d_matching_visual.ipynb
+├──── run_sfm_visualization.ipynb   # Notebook for SfM visualization (pre/post search)
 
 
 # Merge with Jia in Github
@@ -65,7 +71,7 @@ git checkout lsy-merged
 git config --global user.name "Shuying Liu"
 git config --global user.email "liushuying.blaise.2490@gmail.com"
 git add .
-git commit -m "pose estimation and changed hloc pipeline"
+git commit -m "Aachen preprocess, Aachen and Cambridge absolute pose estimation, use soft threshold and new precision calculation on validation and test for all the methods, "
 git push origin lsy-merged --force
 
 # Git operations for training
@@ -84,7 +90,9 @@ git push
 # Get GPU
 interactive --gpus=1 -t 4:00:00
 # Get CPU (for triangulation)
-interactive -p berzelius-cpu -t 8:00:00
+interactive -p berzelius-cpu -t 4:00:00 --mem 128
+# Check the project info
+projinfo
 # Check my use
 squeue -u x_lishu
 # cancel resource
@@ -96,6 +104,24 @@ nscquota
 
 # Environment (install process in lsy-old)
 mamba activate matchenv
+
+---
+
+# Aachen dataset image
+unzip /proj/vlarsson/datasets/aachen_v1.1/images/database_and_query_images.zip -d /proj/vlarsson/outputs_aachen/aachen_images_unzip
+
+# Dataset
+/proj/vlarsson/datasets/aachen_v1.1
+# Images
+/proj/vlarsson/outputs_aachen/aachen_images_unzip
+# Output
+/proj/vlarsson/outputs_aachen
+
+# Aachen dataset v1.1
+unzip /proj/vlarsson/datasets/aachen_v1.1/aachen_v1_1.zip -d /proj/vlarsson/outputs_aachen/aachen_images_unzip_v1_1
+# Additional images
+
+rm -rf /proj/vlarsson/outputs_aachen/covisibility
 
 ---
 
@@ -155,6 +181,15 @@ python -m triangulation.triangulation_cpu_steps_re \
 # Output
 ls /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation
 
+# Special triangulation for Aachen
+python -m triangulation.triangulation_gpu_steps_aachen \
+ --dataset /proj/vlarsson/datasets/aachen_v1.1 \
+ --image_dir /proj/vlarsson/outputs_aachen/aachen_images_unzip/images_upright \
+ --outputs /proj/vlarsson/outputs_aachen/sfm
+python -m triangulation.triangulation_cpu_steps_aachen \
+ --image_dir /proj/vlarsson/outputs_aachen/aachen_images_unzip/images_upright \
+ --outputs /proj/vlarsson/outputs_aachen/sfm
+
 ---
 
 # Covisibility
@@ -179,8 +214,10 @@ python -m covisibility.covisibility_search_pipe_re \
 python -m covisibility.covisibility_search_pipe_aachen \
  --dataset /proj/vlarsson/datasets/aachen_v1.1 \
  --outputs /proj/vlarsson/outputs_aachen/covisibility \
+ --image_dir /proj/vlarsson/outputs_aachen/aachen_images_unzip/images_upright \
+ --v1_1_dir /proj/vlarsson/outputs_aachen/aachen_images_unzip_v1_1 \
  --sfm_dir /proj/vlarsson/outputs_aachen/sfm \
- --query list /proj/vlarsson/datasets/aachen_v1.1/queries
+ --query_dir /proj/vlarsson/datasets/aachen_v1.1/queries
 
 ---
 
@@ -192,8 +229,10 @@ python -m feature.precompute_features_re \
  --sfm_dir /proj/vlarsson/users/x_lishu/colla_matching/outputs/triangulation \
  --scene_list /home/x_lishu/matching/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean_try.txt
 
-# Feature computation for Aachen
-python -m feature.precompute_features_aachen
+python -m feature.precompute_features_aachen \
+ --dataset /proj/vlarsson/datasets/aachen_v1.1 \
+ --outputs /proj/vlarsson/outputs_aachen/covisibility \
+ --sfm_dir /proj/vlarsson/outputs_aachen/sfm
 
 ---
 
@@ -269,11 +308,26 @@ python -m baseline.pr_baseline \
 # RN baselin
 python -m baseline.rn_baseline \
  --dataset  /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
- --covisibility_dir  /proj/vlarsson/outputs/midterm_results \
- --query_dir  /proj/vlarsson/outputs/query_sets \
- --sfm_dir  /proj/vlarsson/outputs/sfm \
+ --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+ --query_dir /proj/vlarsson/outputs/query_sets \
+ --sfm_dir /proj/vlarsson/outputs/sfm \
  --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
  --scene_list /proj/vlarsson/outputs/splits/test.txt
+
+---
+
+# Match metrics on test scenes
+export PYTHONPATH="/home/x_lishu/matching/colla_gluefactory/glue-factory-2d3d-match:$PYTHONPATH"
+python -m evaluation.reasoning \
+ --dataset /proj/vlarsson/datasets/megadepth/Undistorted_SfM \
+ --covisibility_dir /proj/vlarsson/outputs/midterm_results \
+ --query_dir /proj/vlarsson/outputs/query_sets \
+ --sfm_dir /proj/vlarsson/outputs/sfm \
+ --depth_dir /proj/vlarsson/datasets/megadepth/depth_undistorted \
+ --scene_list /proj/vlarsson/outputs/splits/test.txt \
+ --method TRAIN \
+ --checkpoint /home/x_lishu/matching/network_weights/checkpoint_best_all_scenes.tar
+
 
 ---
 
@@ -388,9 +442,85 @@ python -m evaluation.pose_estimation \
  --method HLOC \
  --max_error 6 
 
-# Use Aachen for proper pose estimation, because magadepth dataset has unsure unit for transition
+# Cambridge
+python -m evaluation.pose_estimation_cambridge \
+ --dataset /proj/vlarsson/datasets/cambridge \
+ --covisibility_dir /proj/vlarsson/outputs_cambridge/midterm_results \
+ --query_dir /proj/vlarsson/datasets/cambridge/CambridgeLandmarks_Colmap_Retriangulated_1024px \
+ --sfm_dir /proj/vlarsson/outputs_cambridge/sfm \
+ --scene_list /home/x_lishu/matching/colla_preprocess/3d-2d-Matching-/evaluation/cambridge_selected.txt \
+ --method TRAIN \
+ --checkpoint /home/x_lishu/matching/network_weights/checkpoint_best.tar \
+ --max_error 12
+
+python -m evaluation.pose_estimation_cambridge \
+ --dataset /proj/vlarsson/datasets/cambridge \
+ --covisibility_dir /proj/vlarsson/outputs_cambridge/midterm_results \
+ --query_dir /proj/vlarsson/datasets/cambridge/CambridgeLandmarks_Colmap_Retriangulated_1024px \
+ --sfm_dir /proj/vlarsson/outputs_cambridge/sfm \
+ --scene_list /home/x_lishu/matching/colla_preprocess/3d-2d-Matching-/evaluation/cambridge_selected.txt \
+ --method HLOC \
+ --max_error 12
 
 
+# Aachen
+# Fristly, run hloc original pipeline and get the reference file. 
+python -m evaluation.hloc_aachen_pipeline \
+ --dataset /proj/vlarsson/datasets/aachen_v1.1 \
+ --image_dir /proj/vlarsson/outputs_aachen/aachen_images_unzip/images_upright \
+ --outputs /proj/vlarsson/outputs_aachen/hloc_outputs
+
+# Build SfM
+python -m triangulation.triangulation_aachen \
+ --dataset /proj/vlarsson/datasets/aachen_v1.1 \
+ --image_dir /proj/vlarsson/outputs_aachen/aachen_images_unzip/images_upright \
+ --outputs /proj/vlarsson/outputs_aachen/sfm
+
+# Extract query feature
+
+# Covisibility search on sfm
+python -m covisibility.covisibility_search_pipe_aachen \
+ --dataset /proj/vlarsson/datasets/aachen_v1.1 \
+ --image_dir /proj/vlarsson/outputs_aachen/aachen_images_unzip/images_upright \
+ --outputs /proj/vlarsson/outputs_aachen/covisibility \
+ --sfm_dir /proj/vlarsson/outputs_aachen/sfm \
+ --query_dir /proj/vlarsson/datasets/aachen_v1.1/queries
+
+# Compute SfM features
+python -m feature.precompute_features_aachen \
+ --dataset /proj/vlarsson/datasets/aachen_v1.1 \
+ --outputs /proj/vlarsson/outputs_aachen/covisibility \
+ --sfm_dir /proj/vlarsson/outputs_aachen/sfm
+
+# Absolute pose estimation
+export PYTHONPATH="/home/x_lishu/matching/colla_gluefactory/glue-factory-2d3d-match:$PYTHONPATH"
+python -m evaluation.pose_estimation_aachen \
+ --dataset /proj/vlarsson/datasets/aachen_v1.1 \
+ --covisibility_dir /proj/vlarsson/outputs_aachen/covisibility \
+ --image_dir /proj/vlarsson/outputs_aachen/aachen_images_unzip/images_upright \
+ --sfm_dir /proj/vlarsson/outputs_aachen/sfm \
+ --query_dir /proj/vlarsson/datasets/aachen_v1.1/queries \
+ --outputs /home/x_lishu/matching/colla_preprocess/3d-2d-Matching-/evaluation/outputs \
+ --method TRAIN \
+ --checkpoint /home/x_lishu/matching/network_weights/checkpoint_best_all_scenes.tar \
+ --max_error 12 \
+ --hloc_reference /proj/vlarsson/outputs_aachen/hloc_outputs/Aachen-v1.1_hloc_superpoint+superglue_netvlad50.txt
+
+
+---
+
+# Add our matcher into combine_descriptors_covis_search
+# git clone https://github.com/jojjo99/combine_descriptors_covis_search.git
+# Create new branch "LightGlu3d"
+cd combine_descriptors_covis_search
+# git fetch origin
+# git checkout -b LightGlu3d origin/LightGlu3d
+git checkout LightGlu3d
+git config --global user.name "Shuying Liu"
+git config --global user.email "liushuying.blaise.2490@gmail.com"
+git add .
+git commit -m ""
+git push origin lsy-merged --force
 
 
 ```

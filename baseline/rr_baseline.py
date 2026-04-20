@@ -16,14 +16,13 @@ from pathlib import Path
 from tqdm import tqdm
 from hloc.utils import read_write_model as rw
 from utils.utils import qvec2rotmat
-from ground_truth.generate_gt_pairs_re import load_query_cams, compute_ground_truth_matches
+from ground_truth.generate_gt_pairs_by_scene import load_query_cams, compute_ground_truth_matches_soft
 from .feature_3d_compute_old import pos_encode
 from lightglue import LightGlue
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 def load_similar_pairs(pair_file_path):
     pairs = {}
@@ -34,6 +33,21 @@ def load_similar_pairs(pair_file_path):
                 if len(parts) >= 2:
                     pairs[parts[0]] = parts[1]
     return pairs
+
+def compute_precision_recall(pred_matches, gt_matches):
+    mask_recall = gt_matches > -1
+    num_gt = mask_recall.sum()
+    num_correct_recall = ((pred_matches == gt_matches) & mask_recall).sum()
+    
+    recall = (num_correct_recall / num_gt) if num_gt > 0 else None
+
+    mask_precision = (pred_matches > -1) & (gt_matches >= -1)
+    num_pred_eval = mask_precision.sum()
+    num_correct_precision = ((pred_matches == gt_matches) & mask_precision).sum()
+    
+    precision = (num_correct_precision / num_pred_eval) if num_pred_eval > 0 else None
+
+    return precision, recall
 
 def compute_rr_baseline(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, device):
 
@@ -160,7 +174,7 @@ def main():
                 with h5py.File(depth_file, 'r') as f_depth:
                     depth_map = f_depth['depth'][:]
                     
-                gt_matches0, _ = compute_ground_truth_matches(
+                gt_matches0, _ = compute_ground_truth_matches_soft(
                     {"keypoints": q_kpts}, {"keypoints": p3d_kpts}, q_camera, depth_map
                 )
 
@@ -178,18 +192,11 @@ def main():
                 )
 
                 # Metrics
-                valid_pred = rr_matches0 > -1
-                valid_gt = gt_matches0 > -1
-                correct_matches = (rr_matches0 == gt_matches0) & valid_gt
-
-                num_pred = valid_pred.sum()
-                num_gt = valid_gt.sum()
-                num_correct = correct_matches.sum()
-
-                if num_pred > 0:
-                    scene_precisions.append(num_correct / num_pred)
-                if num_gt > 0:
-                    scene_recalls.append(num_correct / num_gt)
+                precision, recall = compute_precision_recall(rr_matches0, gt_matches0)
+                if precision is not None:
+                    scene_precisions.append(precision)
+                if recall is not None:
+                    scene_recalls.append(recall)
 
         # Summary
         avg_scene_precision = np.mean(scene_precisions) if scene_precisions else 0

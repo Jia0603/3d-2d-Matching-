@@ -16,9 +16,9 @@ from pathlib import Path
 from tqdm import tqdm
 from hloc.utils import read_write_model as rw
 from utils.utils import qvec2rotmat
-from ground_truth.generate_gt_pairs_re import load_query_cams, compute_ground_truth_matches
+from ground_truth.generate_gt_pairs_by_scene import load_query_cams, compute_ground_truth_matches_soft
 from lightglue import LightGlue
-from .rr_baseline import load_similar_pairs
+from .rr_baseline import load_similar_pairs, compute_precision_recall
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -177,7 +177,7 @@ def main():
                 with h5py.File(depth_file, 'r') as f_depth:
                     depth_map = f_depth['depth'][:]
                     
-                gt_matches0, _ = compute_ground_truth_matches(
+                gt_matches0, _ = compute_ground_truth_matches_soft(
                     {"keypoints": q_kpts}, {"keypoints": p3d_kpts}, q_camera, depth_map
                 )
 
@@ -196,18 +196,11 @@ def main():
                 )
 
                 # Metrics
-                valid_pred = pr_matches0 > -1
-                valid_gt = gt_matches0 > -1
-                correct_matches = (pr_matches0 == gt_matches0) & valid_gt
-
-                num_pred = valid_pred.sum()
-                num_gt = valid_gt.sum()
-                num_correct = correct_matches.sum()
-
-                if num_pred > 0:
-                    scene_precisions.append(num_correct / num_pred)
-                if num_gt > 0:
-                    scene_recalls.append(num_correct / num_gt)
+                precision, recall = compute_precision_recall(pr_matches0, gt_matches0)
+                if precision is not None:
+                    scene_precisions.append(precision)
+                if recall is not None:
+                    scene_recalls.append(recall)
 
         # Summary
         avg_scene_precision = np.mean(scene_precisions) if scene_precisions else 0

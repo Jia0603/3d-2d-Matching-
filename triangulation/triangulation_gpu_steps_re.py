@@ -5,9 +5,7 @@ import os
 import warnings
 import torch.multiprocessing as mp
 warnings.filterwarnings("ignore", category=FutureWarning)
-
 from hloc import extract_features, match_features
-
 import argparse
 import logging
 
