@@ -40,14 +40,17 @@ root = Path("/proj/vlarsson/datasets/megadepth/Undistorted_SfM")
 outputs = Path("/proj/vlarsson/outputs/sfm/")
 html_save_dir =Path("/home/x_jiagu/degree_project/SfM_htmls")
 
-scene_names = sorted([
-    p.name
-    for p in root.iterdir()
-    if p.is_dir()
-])
-scene_names.remove("0209")
+file_path = "/home/x_jiagu/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean.txt"
+with open(file_path,'r')as f:
+    scene_names=[item.strip() for item in f.readlines()]
+# scene_names = sorted([
+#     p.name
+#     for p in root.iterdir()
+#     if p.is_dir()
+# ])
+# scene_names.remove("0209")
 
-for scene in scene_names[72:120]: # change the slice to process more scenes
+for scene in ["1589"]:#scene_names[94:]: # change the slice to process more scenes
     print(f"Start processing scene: {scene}...")
 
     images_path = root / scene / "images"
@@ -85,4 +88,4 @@ for scene in scene_names[72:120]: # change the slice to process more scenes
     print(f"Secene {scene} 3D triangulation on CPU completed.")
 
     # Step 4: Visualization
-    visualize_sfm_3d(sfm_dir, scene, html_save_dir, True)
+    visualize_sfm_3d(sfm_dir, scene, html_save_dir, False)

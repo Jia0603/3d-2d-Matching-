@@ -249,18 +249,21 @@ if __name__ == "__main__":
     depth_rel_thresh=0.1
     output_dir = Path("/proj/vlarsson/outputs")
     scene_lst_path = output_dir / "splits"
-    scene_names = [] 
-    with open(scene_lst_path / "train.txt", "r") as f:
-        for name in f.readlines():
-            scene_names.append(name.strip())
-    with open(scene_lst_path / "val.txt", "r") as f:
-        for name in f.readlines():
-            scene_names.append(name.strip())
-    with open(scene_lst_path / "test.txt", "r") as f:
-        for name in f.readlines():
-            scene_names.append(name.strip())
+    file_path = "/home/x_jiagu/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean.txt"
+    with open(file_path,'r')as f:
+        scene_names=[item.strip() for item in f.readlines()]
+    # scene_names = [] 
+    # with open(scene_lst_path / "train.txt", "r") as f:
+    #     for name in f.readlines():
+    #         scene_names.append(name.strip())
+    # with open(scene_lst_path / "val.txt", "r") as f:
+    #     for name in f.readlines():
+    #         scene_names.append(name.strip())
+    # with open(scene_lst_path / "test.txt", "r") as f:
+    #     for name in f.readlines():
+    #         scene_names.append(name.strip())
     all_ratios = []
-    for scene in scene_names:
+    for scene in scene_names[94:]:
         scene_gt_data = {}
         query_path = output_dir / "query_sets" / scene
         query_names = query_path / "query_image_names.txt"

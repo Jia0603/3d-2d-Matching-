@@ -106,9 +106,12 @@ if __name__ == "__main__":
 
     root = Path("/proj/vlarsson/datasets/megadepth/Undistorted_SfM")
     output_dir = Path("/proj/vlarsson/outputs")
-    scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
-    scene_names.remove("0209") # empty data set
-    for scene in scene_names[:1]:  # change the slice to process more scenes
+    # scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
+    # scene_names.remove("0209") # empty data set
+    file_path = "/home/x_jiagu/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean.txt"
+    with open(file_path,'r')as f:
+        scene_names=[item.strip() for item in f.readlines()]
+    for scene in scene_names[94:]:  # change the slice to process more scenes
         extract_query_sets(scene,
                            root,
                            root.parent / "depth_undistorted",

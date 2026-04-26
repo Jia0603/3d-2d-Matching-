@@ -55,12 +55,15 @@ feature_conf = {
 matcher_conf = match_features.confs["superpoint+lightglue"]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-scene_names = sorted([
-    p.name
-    for p in root.iterdir()
-    if p.is_dir()
-])
-scene_names.remove("0209")
+file_path = "/home/x_jiagu/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean.txt"
+with open(file_path,'r')as f:
+    scene_names=[item.strip() for item in f.readlines()]
+# scene_names = sorted([
+#     p.name
+#     for p in root.iterdir()
+#     if p.is_dir()
+# ])
+# scene_names.remove("0209")
 def process_scene(scene): # change the slice to process more scenes
     print(f"Start processing scene: {scene}...")
 
@@ -103,7 +106,7 @@ if __name__ == "__main__":
     semaphore = mp.Semaphore(4)
     processes = []
 
-    for scene in scene_names[72:120]:
+    for scene in scene_names[94:]:
         p = mp.Process(target=worker, args=(scene, semaphore))
         p.start()
         processes.append(p)

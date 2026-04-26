@@ -80,13 +80,20 @@ def save_3d_features_to_h5(feature_dict, output_path):
 if __name__ == "__main__":
 
     root = Path("/proj/vlarsson/datasets/megadepth/Undistorted_SfM")
+    outputs = Path("/proj/vlarsson/outputs/")
+    # root = Path("/proj/vlarsson/outputs_cambridge/sfm/")
+    # outputs = Path("/proj/vlarsson/outputs_cambridge")
+    # file_path = "/home/x_jiagu/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean.txt"
+    # with open(file_path,'r')as f:
+    #     scene_names=[item.strip() for item in f.readlines()]
     scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
-    scene_names.remove("0209")
-    for scene in scene_names[76:120]:
+
+    for scene in ["1589"]: #scene_names:
 
         print(f"Start averaged feature computation for scene {scene}...")
-        sfm_dir = Path("/proj/vlarsson/outputs/sfm") / scene / "sfm_superpoint+lightglue"
-        output_dir = Path("/proj/vlarsson/outputs/midterm_results/") / scene
+        sfm_dir = outputs / "sfm" / scene / "sfm_superpoint+lightglue"
+        output_dir = outputs / "midterm_results" / scene
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         _, images, points3D = rw.read_model(sfm_dir, ext=".bin")
         h5_path = sfm_dir.parent / "feats-superpoint-n2048.h5"

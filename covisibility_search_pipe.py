@@ -195,33 +195,52 @@ def covisibility_search(
 
 if __name__ == "__main__":
 
+    # root = Path("/proj/vlarsson/outputs_cambridge/sfm/")
     root = Path("/proj/vlarsson/datasets/megadepth/Undistorted_SfM")
     # outputs = Path("/proj/vlarsson/outputs/sfm/")
+    # outputs = root.parent / "midterm_results"
+    # outputs.mkdir(parents=True, exist_ok=True)
     outputs = Path("/proj/vlarsson/outputs/midterm_results/")
+    # file_path = "/home/x_jiagu/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean.txt"
+    # with open(file_path,'r')as f:
+    #     scene_names=[item.strip() for item in f.readlines()]
     scene_names = sorted([
         p.name
         for p in root.iterdir()
         if p.is_dir()
     ])
-    scene_names.remove("0209")
 
-    for scene in scene_names[76:120]: # Change the slice to process more scenes
+    for scene in scene_names: # Change the slice to process more scenes
         print(f"Start processing covisibility search for scene: {scene}...")
-        images_path = root / scene / "images" # Contains all .jpg images
         output_dir = outputs / scene
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        images_path = root / scene / "images" # Contains all .jpg images
+        query_list = output_dir.parent.parent / "query_sets" / output_dir.name / "query_image_names.txt"
+        # images_path = Path("/proj/vlarsson/datasets/cambridge/") / scene
+        # query_path = Path("/proj/vlarsson/datasets/cambridge/") / scene / "dataset_test.txt"
+
+        # query_list = output_dir / "query_names_list.txt"
+        # with open(query_path, 'r') as f_in, open(query_list, 'w') as f_out:
+        #     for _ in range(3):
+        #         next(f_in)
+        #     for line in f_in:
+        #         line = line.strip()
+        #         if line: 
+        #             img_path = line.split()[0]
+        #             f_out.write(img_path + '\n')
 
         # Find the most similar images for each query image in Scenexxxx
         matched_pairs_dict = most_similar_pair(
             reference_dir=images_path,
             query_dir=images_path,
-            query_list = output_dir.parent.parent / "query_sets" / output_dir.name / "query_image_names.txt",
+            query_list=query_list,
             output_dir=output_dir
         )
 
         # Load SfM model
         _, images, point3D = rw.read_model(
-            output_dir.parent.parent / "sfm" / output_dir.name / "sfm_superpoint+lightglue", ext=".bin"
+            output_dir.parent.parent / "sfm" / scene / "sfm_superpoint+lightglue", ext=".bin"
             )
         
         # Conduct covisibility search for each matched pair
