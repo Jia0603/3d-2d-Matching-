@@ -120,7 +120,7 @@ def compute_trained_lightglu3d(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3
         "descriptors0": torch.from_numpy(q_desc.T).unsqueeze(0).float().to(device), 
         "descriptors1": torch.from_numpy(p3d_desc.T).unsqueeze(0).float().to(device), 
         "view0": {
-            "image_size": torch.tensor([q_img_size]).float().to(device)
+            "image_size": torch.from_numpy(q_img_size).unsqueeze(0).float().to(device)
         }
     }
     with torch.no_grad():

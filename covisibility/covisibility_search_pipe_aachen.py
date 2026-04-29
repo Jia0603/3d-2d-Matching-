@@ -9,6 +9,7 @@ from pathlib import Path
 from tqdm import tqdm
 from utils.utils import qvec2rotmat
 from .covisibility_search_pipe_re import most_similar_pair, covisibility_search
+import matplotlib.pyplot as plt
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -129,7 +130,12 @@ def process_aachen(args):
 
     # Conduct covisibility search
     covisibility_results = {}
-    point_counts = [] 
+
+    # Separate lists for Day and Night point counts
+    point_counts_day = [] 
+    point_counts_night = []
+
+    # point_counts = [] 
     log_file_path = output_dir / "query_details.txt"
     
     with open(log_file_path, "w") as log_f:
@@ -156,7 +162,11 @@ def process_aachen(args):
                 max_points=args.max_points
             )
             
-            point_counts.append(len(unique_points))
+            # point_counts.append(len(unique_points))
+            if "day" in query_image.lower():
+                point_counts_day.append(len(unique_points))
+            else:
+                point_counts_night.append(len(unique_points))
 
             # Write logs
             log_f.write(f"Query Image: {query_image}, Matched Image: {matched_image}\n")
@@ -171,15 +181,34 @@ def process_aachen(args):
             }
 
     # Print summary
-    if point_counts:
-        logger.info("="*40)
-        logger.info("Covisibility Summary for Aachen")
-        logger.info(f"Target Point Limitation: {args.max_points}")
-        logger.info(f"Smallest 3D Pointcloud:  {np.min(point_counts)}")
-        logger.info(f"Largest 3D Pointcloud:   {np.max(point_counts)}")
-        logger.info(f"Average 3D Pointcloud:   {np.mean(point_counts):.2f}")
-        logger.info(f"(Detailed results saved to: {log_file_path})")
-        logger.info("="*40)
+    # if point_counts:
+    #     logger.info("="*40)
+    #     logger.info("Covisibility Summary for Aachen")
+    #     logger.info(f"Target Point Limitation: {args.max_points}")
+    #     logger.info(f"Smallest 3D Pointcloud:  {np.min(point_counts)}")
+    #     logger.info(f"Largest 3D Pointcloud:   {np.max(point_counts)}")
+    #     logger.info(f"Average 3D Pointcloud:   {np.mean(point_counts):.2f}")
+    #     logger.info(f"(Detailed results saved to: {log_file_path})")
+    #     logger.info("="*40)
+
+    if point_counts_day or point_counts_night:
+        plt.figure(figsize=(10, 5))
+        bins = np.linspace(0, args.max_points, 50)
+        
+        if point_counts_day:
+            plt.hist(point_counts_day, bins=bins, alpha=0.6, color='orange', label='Aachen Day', density=True)
+        if point_counts_night:
+            plt.hist(point_counts_night, bins=bins, alpha=0.6, color='blue', label='Aachen Night', density=True)
+            
+        plt.title('Aachen Day vs Night: 3D Point Covisibility Distribution')
+        plt.xlabel('Number of Visible 3D Points')
+        plt.ylabel('Density')
+        plt.legend()
+        plt.grid(axis='y', alpha=0.3)
+        
+        plot_path = "/home/x_lishu/matching/colla_preprocess/3d-2d-Matching-/covisibility/aachen_day_night_distribution.png"
+        plt.savefig(plot_path)
+        logger.info(f"Saved distribution plot to {plot_path}")
 
     # Save covisibility_results.pkl
     with open(output_dir / "covisibility_results.pkl", "wb") as f:

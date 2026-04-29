@@ -20,6 +20,7 @@ from utils.utils import qvec2rotmat
 from tqdm import tqdm
 from lightglue import LightGlue
 from baseline.pr_baseline import compute_pr_baseline
+from baseline.pr_baseline_change import compute_pr_baseline_change
 from baseline.rr_baseline import compute_rr_baseline
 from baseline.rn_baseline import compute_rn_baseline
 from visualization.visualize_matches import compute_nn_baseline, load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d, get_most_similar_ref
@@ -87,20 +88,19 @@ def estimate_pose_blind(matched_2d, matched_3d, camera, q_img_size, max_error, i
         scale_x = new_w / orig_w
         scale_y = new_h / orig_h
 
-        model_str = getattr(camera, 'model_name', camera.model.name if hasattr(camera.model, 'name') else str(camera.model))
+        model_name = getattr(camera, 'model_name', camera.model.name if hasattr(camera.model, 'name') else str(camera.model))
         
-        if is_debug:
-            logger.info(f"[DEBUG] Scaling Camera Model: {model_str}")
-            logger.info(f"[DEBUG] Original size: {orig_w}x{orig_h} | NN size: {new_w}x{new_h}")
-            logger.info(f"[DEBUG] Scale factors: x={scale_x:.4f}, y={scale_y:.4f}")
-            logger.info(f"[DEBUG] Params before: {params}")
-
-        params[0] *= scale_x # f
-        params[1] *= scale_x # cx
-        params[2] *= scale_y # cy
-
-        if is_debug:
-            logger.info(f"[DEBUG] Params after:  {params}")
+        if model_name in ["SIMPLE_PINHOLE", "SIMPLE_RADIAL", "RADIAL_FISHEYE", "SIMPLE_RADIAL_FISHEYE"]:
+            params[0] *= scale_x # f
+            params[1] *= scale_x # cx
+            params[2] *= scale_y # cy
+        elif model_name in ["PINHOLE", "OPENCV", "OPENCV_FISHEYE", "RADIAL"]:
+            params[0] *= scale_x # fx
+            params[1] *= scale_y # fy
+            params[2] *= scale_x # cx
+            params[3] *= scale_y # cy
+        else:
+            logger.warning(f"Unrecognized camera model {model_name}. Scaling might be incorrect!")
 
     colmap_cam = pycolmap.Camera(
         model=camera.model,
@@ -152,7 +152,7 @@ def process_aachen(args, device):
     reference_poses = load_reference_poses(args.hloc_reference)
 
     # Initialize matchers
-    if method in ["RR", "RN", "PR", "HLOC"]:
+    if method in ["RR", "RN", "PR", "PRC", "HLOC"]:
         baseline_matcher = LightGlue(features='superpoint', depth_confidence=-1, width_confidence=-1).eval().to(device)
     elif method == "TRAIN":
         if args.checkpoint is None: raise ValueError("--checkpoint must be provided.")
@@ -182,6 +182,12 @@ def process_aachen(args, device):
     
     estimated_poses = {}
     failed_pnp_count = 0
+
+    # Preload features
+    features_path = args.sfm_dir / "feats-superpoint-n2048.h5"
+    p3d_feats_path = args.covisibility_dir / "points3D_feats_cache.h5"
+    features_h5 = h5py.File(features_path, "r")
+    p3d_feats_h5 = h5py.File(p3d_feats_path, "r")
 
     for query_name in tqdm(queries, desc=f"Evaluating Aachen"):
         
@@ -214,28 +220,30 @@ def process_aachen(args, device):
         camera = aachen_query_cams[query_name]
         
         # Load query features
-        features_path = args.sfm_dir / "feats-superpoint-n2048.h5"
-        with h5py.File(features_path, "r") as f:
-            if query_name not in f: 
-                failed_pnp_count += 1
-                continue
-            q_kpts = f[query_name]["keypoints"][:]
-            q_desc = f[query_name]["descriptors"][:]
-            q_img_size = f[query_name]["image_size"][:]
+        if query_name not in features_h5: 
+            failed_pnp_count += 1
+            continue
+        q_kpts = features_h5[query_name]["keypoints"][:]
+        q_desc = features_h5[query_name]["descriptors"][:]
+        q_img_size = np.array(features_h5[query_name]["image_size"][:])
 
         # Load covisible features
         visible_p3d = covis_dict[query_name]["unique_points"]
-        p3d_desc, p3d_kpts = [], []
+        p3d_desc, p3d_kpts, p3d_xyz = [], [], []
         p3d_indices_map = {} 
 
-        with h5py.File(args.covisibility_dir / "points3D_feats_cache.h5", "r") as f:
-            idx_counter = 0
-            for pid in visible_p3d:
-                if str(pid) in f and int(pid) in reconstruction.points3D:
-                    p3d_desc.append(f[str(pid)]["descriptors"][:].reshape(256))
-                    p3d_kpts.append(f[str(pid)]["keypoints"][:].reshape(3))
-                    p3d_indices_map[int(pid)] = idx_counter
-                    idx_counter += 1
+        idx_counter = 0
+        for pid in visible_p3d:
+            pid_str = str(pid)
+            if pid_str in p3d_feats_h5 and int(pid) in reconstruction.points3D:
+                p3d_desc.append(p3d_feats_h5[pid_str]["descriptors"][:].reshape(256))
+                p3d_kpts.append(p3d_feats_h5[pid_str]["keypoints"][:].reshape(3))
+                
+                # Pull the exact XYZ coordinates straight from COLMAP
+                p3d_xyz.append(reconstruction.points3D[int(pid)].xyz) 
+                
+                p3d_indices_map[int(pid)] = idx_counter
+                idx_counter += 1
         
         if not p3d_kpts:
             failed_pnp_count += 1
@@ -243,6 +251,7 @@ def process_aachen(args, device):
             
         p3d_desc = np.vstack(p3d_desc).T 
         p3d_kpts = np.vstack(p3d_kpts) 
+        p3d_xyz = np.vstack(p3d_xyz) # Stack the XYZ coordinates
 
         ref_data_list = []
         if method == "HLOC":
@@ -272,6 +281,16 @@ def process_aachen(args, device):
             pred_matches0, _, _, _, _ = compute_rn_baseline(baseline_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, device)
         elif method == "PR":
             pred_matches0, _, _, _, _ = compute_pr_baseline(baseline_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, ref_cam_obj, device)
+        elif method == "PRC":
+            q_camera_dict = {
+                "intrinsics": {
+                    "model": getattr(camera, 'model_name', getattr(camera.model, 'name', str(camera.model))),
+                    "width": camera.width,
+                    "height": camera.height,
+                    "params": camera.params
+                }
+            }
+            pred_matches0, _, _, _, _ = compute_pr_baseline_change(baseline_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, q_camera_dict, device)
         elif method == "TRAIN":
             pred_matches0 = compute_trained_lightglu3d(lightglu3d_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
         elif method == "ADAPT":
@@ -280,7 +299,7 @@ def process_aachen(args, device):
         # Pose estimation
         valid_mask = pred_matches0 > -1
         matched_2d = q_kpts[valid_mask] + 0.5
-        matched_3d = p3d_kpts[pred_matches0[valid_mask]]
+        matched_3d = p3d_xyz[pred_matches0[valid_mask]] # Use the true PyCOLMAP XYZ coordinates
 
         if is_debug_target:
             logger.info(f"[DEBUG] Feeding {len(matched_2d)} matches into PyCOLMAP")
@@ -352,7 +371,7 @@ def main():
     parser.add_argument('--sfm_dir', type=Path, required=True, help="Path to the sfm directory")
     parser.add_argument('--query_dir', type=Path, required=True, help="Path to original queries directory")
     parser.add_argument('--outputs', type=Path, required=True, help="Where to save the final Benchmark .txt file")
-    parser.add_argument('--method', type=str, required=True, choices=['NN', 'RR', 'RN', 'PR', 'TRAIN', 'ADAPT', 'HLOC'], help="Matching method")
+    parser.add_argument('--method', type=str, required=True, choices=['NN', 'RR', 'RN', 'PR', 'PRC', 'TRAIN', 'ADAPT', 'HLOC'], help="Matching method")
     parser.add_argument('--checkpoint', type=str, default=None, help="Path to trained weights")
     parser.add_argument('--max_error', type=float, default=12.0, help="RANSAC Reprojection Error Threshold")
     parser.add_argument('--hloc_reference', type=Path, default=None, help="Path to HLOC generated txt file for coordinate verification")

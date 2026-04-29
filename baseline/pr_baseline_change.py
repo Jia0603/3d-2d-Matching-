@@ -1,11 +1,3 @@
-# 1. find the valid scene list, find the query set. 
-# 2. for each query image, find the most similar reference image from the covisibility txt. 
-#    find the covisible 3d points from pair covisibility. 
-# 3. then project the visible points into the most similar reference camera pose. 
-# 4. use the Lightglue to find the match between this kind of flat image and the query image. 
-# 5. calculate ground truth,
-#    and compare baseline with the ground truth, calculate the metrics.
-
 import argparse
 import logging
 import pickle
@@ -18,16 +10,16 @@ from hloc.utils import read_write_model as rw
 from utils.utils import qvec2rotmat
 from ground_truth.generate_gt_pairs_by_scene import load_query_cams, compute_ground_truth_matches_soft
 from lightglue import LightGlue
-from .rr_baseline import load_similar_pairs, compute_precision_recall
+from baseline.rr_baseline import load_similar_pairs, compute_precision_recall
 
 # Setup Logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
-def compute_pr_baseline(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, ref_camera, device):
+def compute_pr_baseline_change(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, q_camera, device):
 
-    # Rotate 3D points into reference pose
+    # Rotate 3D points into reference pose (extrinsics)
     R = ref_pose_matrix[:, :3]
     t = ref_pose_matrix[:, 3]
     p3d_cam = (R @ p3d_kpts.T).T + t
@@ -37,10 +29,12 @@ def compute_pr_baseline(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc,
     x_norm = p3d_cam[:, 0] / Z
     y_norm = p3d_cam[:, 1] / Z
 
-    params = ref_camera.params
-    camera_model = ref_camera.model
+    # Project using query intrinsics
+    intrinsics = q_camera["intrinsics"]
+    params = intrinsics["params"]
+    camera_model = str(intrinsics["model"])
     
-    if camera_model in ["SIMPLE_PINHOLE", "SIMPLE_RADIAL", "RADIAL_FISHEYE", "SIMPLE_RADIAL_FISHEYE"]: 
+    if camera_model in ["SIMPLE_PINHOLE", "SIMPLE_RADIAL", "RADIAL_FISHEYE", "SIMPLE_RADIAL_FISHEYE", "0", "1", "4", "8"]: 
         fx = fy = params[0]
         cx = params[1]
         cy = params[2]
@@ -60,19 +54,20 @@ def compute_pr_baseline(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc,
 
     p3d_proj_kpts = np.column_stack((p3d_proj_x, p3d_proj_y))
 
-    ref_w, ref_h = ref_camera.width, ref_camera.height
+    # Use Query canvas dimensions
+    proj_w, proj_h = intrinsics["width"], intrinsics["height"]
 
     # Format in LightGlue
     feats0 = {
         "keypoints": torch.from_numpy(q_kpts).float().unsqueeze(0).to(device),
         "descriptors": torch.from_numpy(q_desc.T).float().unsqueeze(0).to(device),
-        "image_size": torch.from_numpy(np.array(q_img_size)).unsqueeze(0).float().to(device)
+        "image_size": torch.from_numpy(np.array(q_img_size)).float().unsqueeze(0).to(device)
     }
     
     feats1 = {
         "keypoints": torch.from_numpy(p3d_proj_kpts).float().unsqueeze(0).to(device),
         "descriptors": torch.from_numpy(p3d_desc.T).float().unsqueeze(0).to(device),
-        "image_size": torch.tensor([[ref_w, ref_h]]).float().to(device)
+        "image_size": torch.tensor([[proj_w, proj_h]]).float().to(device)
     }
     
     # Predict matches
@@ -85,10 +80,11 @@ def compute_pr_baseline(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc,
     if len(matches) > 0:
         pred_matches0[matches[:, 0]] = matches[:, 1]
         
-    return pred_matches0, res, p3d_proj_kpts, ref_w, ref_h
+    return pred_matches0, res, p3d_proj_kpts, proj_w, proj_h
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate PR Baseline across all test scenes")
+    parser = argparse.ArgumentParser(description="Evaluate Changed PR Baseline across all test scenes")
     parser.add_argument('--dataset', type=Path, required=True)
     parser.add_argument('--covisibility_dir', type=Path, required=True)
     parser.add_argument('--query_dir', type=Path, required=True)
@@ -112,7 +108,7 @@ def main():
 
     # Process each scene
     for scene in scenes:
-        logger.info(f"Starting PR Baseline Evaluation for Scene {scene}...")
+        logger.info(f"Starting Changed PR Baseline Evaluation for Scene {scene}...")
         
         # Load query
         query_names_file = args.query_dir / scene / "query_image_names_clean.txt"
@@ -181,18 +177,17 @@ def main():
                     {"keypoints": q_kpts}, {"keypoints": p3d_kpts}, q_camera, depth_map
                 )
 
-                # Reference camera pose and intrinsics
+                # Reference camera pose
                 ref_image_obj = next((img for img in sfm_images.values() if img.name == ref_name), None)
                 if not ref_image_obj:
                     continue
                 ref_R = qvec2rotmat(ref_image_obj.qvec)
                 ref_pose_matrix = np.hstack((ref_R, ref_image_obj.tvec.reshape(3, 1)))
-                ref_cam_obj = sfm_cameras[ref_image_obj.camera_id]
 
-                # Run PR baseline
-                pr_matches0, res, p3d_proj_kpts, ref_w, ref_h = compute_pr_baseline(
+                # Run changed PR baseline (Reference Pose + Query Intrinsics)
+                pr_matches0, res, p3d_proj_kpts, proj_w, proj_h = compute_pr_baseline_change(
                     matcher, q_kpts, q_desc, q_img_size, 
-                    p3d_kpts, p3d_desc, ref_pose_matrix, ref_cam_obj, device
+                    p3d_kpts, p3d_desc, ref_pose_matrix, q_camera, device
                 )
 
                 # Metrics
@@ -207,7 +202,7 @@ def main():
         avg_scene_recall = np.mean(scene_recalls) if scene_recalls else 0
         
         logger.info("="*40)
-        logger.info(f"PR Baseline Results for Scene: {scene}")
+        logger.info(f"Changed PR Baseline Results for Scene: {scene}")
         logger.info(f"Evaluated Queries: {len(scene_precisions)}")
         logger.info(f"Average Precision: {avg_scene_precision:.4f}")
         logger.info(f"Average Recall:    {avg_scene_recall:.4f}")
@@ -217,7 +212,7 @@ def main():
         overall_recalls.extend(scene_recalls)
 
     logger.info("="*40)
-    logger.info("OVERALL PR BASELINE RESULTS")
+    logger.info("OVERALL CHANGED PR BASELINE RESULTS")
     logger.info(f"Total Scenes Evaluated:  {len(scenes)}")
     logger.info(f"Total Queries Evaluated: {len(overall_precisions)}")
     logger.info(f"Average Precision: {np.mean(overall_precisions):.4f}")
