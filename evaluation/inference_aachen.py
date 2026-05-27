@@ -6,7 +6,6 @@ import torch
 import h5py
 from pathlib import Path
 from tqdm import tqdm
-import pycolmap
 from hloc.utils import read_write_model as rw
 from utils.utils import qvec2rotmat
 from lightglue import LightGlue
@@ -14,8 +13,10 @@ from baseline.rr_baseline import load_similar_pairs, compute_precision_recall, c
 from baseline.pr_baseline import compute_pr_baseline
 from baseline.pr_baseline_change import compute_pr_baseline_change
 from baseline.rn_baseline import compute_rn_baseline
-from visualization.visualize_matches import compute_nn_baseline, load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d
 from evaluation.pose_estimation_aachen import parse_aachen_cameras
+from baseline.nn_baseline import compute_nn_baseline
+from baseline.trained_matcher import load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d, compute_trained_lightglu3d_dynamic
+from .sigma_distribution import show_results_with_sigma, show_aachen_results_fixed_sigma
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -50,11 +51,10 @@ def main():
     elif method == "ADAPT":
         if not args.checkpoint: raise ValueError("--checkpoint must be provided for ADAPT.")
         matchers['adapt'] = load_trained_adapt(args.checkpoint, device)
-
     # Load pre-computed ref gt
     if not args.gt_path.exists():
         raise FileNotFoundError(f"Ground Truth file not found at {args.gt_path}.")
-    
+
     logger.info("Loading HLOC Reference Ground Truth...")
     with open(args.gt_path, "rb") as f:
         gt_data = pickle.load(f)
@@ -74,6 +74,9 @@ def main():
     # Data arrays for final reporting
     day_precisions, day_recalls = [], []
     night_precisions, night_recalls = [], []
+    # Trackers for separate matchability (sigma)
+    day_sigma0, day_sigma1 = [], []
+    night_sigma0, night_sigma1 = [], []
 
     q_feats_path = args.sfm_dir / "feats-superpoint-n2048.h5"
     p3d_feats_path = args.covisibility_dir / "points3D_feats_cache.h5"
@@ -82,8 +85,6 @@ def main():
     with h5py.File(q_feats_path, "r") as q_feats_h5, h5py.File(p3d_feats_path, "r") as p3d_feats_h5:
         
         for full_query_name, gt_matches in tqdm(gt_data.items(), desc=f"Evaluating {method} Queries"):
-            base_name = Path(full_query_name).name
-            
             if full_query_name not in covis_dict or len(covis_dict[full_query_name]["unique_points"]) == 0:
                 continue
                 
@@ -115,7 +116,7 @@ def main():
             p3d_desc = np.vstack(p3d_desc).T 
             p3d_kpts = np.vstack(p3d_kpts)   
 
-            # Prepare Reference Data for Baselines
+            # Prepare reference data for baselines
             ref_pose_matrix, ref_cam_obj = None, None
             if method in ["PR", "RR", "RN", "PRC"]:
                 ref_name = pair_dict.get(full_query_name)
@@ -127,7 +128,7 @@ def main():
                 ref_pose_matrix = np.hstack((ref_R, ref_image_obj.tvec.reshape(3, 1)))
                 ref_cam_obj = sfm_cameras[ref_image_obj.camera_id]
 
-            # Format q_camera for the PRC Baseline
+            # Format q_camera for the PRC
             q_camera = None
             if method == "PRC":
                 cam_obj = query_cams.get(full_query_name)
@@ -153,12 +154,26 @@ def main():
             elif method == "PRC":
                 pred_matches0, _, _, _, _ = compute_pr_baseline_change(matchers['baseline'], q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, q_camera, device)
             elif method == "TRAIN":
-                pred_matches0 = compute_trained_lightglu3d(matchers['lightglu3d'], q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+                pred_matches0, score_matrix = compute_trained_lightglu3d_dynamic(matchers['lightglu3d'], q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
             elif method == "ADAPT":
-                pred_matches0 = compute_trained_lightglu3d(matchers['adapt'], q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+                pred_matches0, _ = compute_trained_lightglu3d(matchers['adapt'], q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+            
+            # Save sigma
+            if score_matrix is not None:
+                dustbin_scores0 = score_matrix[:-1, -1]
+                dustbin_scores1 = score_matrix[-1, :-1]
+                sigma0 = 1.0 - np.exp(dustbin_scores0)
+                sigma1 = 1.0 - np.exp(dustbin_scores1)
+                
+                if "day" in full_query_name.lower():
+                    day_sigma0.append(sigma0)
+                    day_sigma1.append(sigma1)
+                else:
+                    night_sigma0.append(sigma0)
+                    night_sigma1.append(sigma1)
             
             # Compute Precision and Recall
-            precision, recall = compute_precision_recall(pred_matches0, gt_matches0)
+            precision, recall, _, _, _ = compute_precision_recall(pred_matches0, gt_matches0)
             
             # If the model failed completely and predicted 0 matches, penalize it with 0.0 scores
             if precision is None: precision = 0.0
@@ -196,6 +211,10 @@ def main():
         logger.info(f"[TOTAL] Match Precision:   {np.mean(all_prec):.4f}")
         logger.info(f"[TOTAL] Match Recall:      {np.mean(all_rec):.4f}")
         logger.info("="*50)
+
+    # Plot sigma distributions
+    if method in ["TRAIN", "ADAPT"]:
+        show_aachen_results_fixed_sigma(day_sigma0, day_sigma1, night_sigma0, night_sigma1, num_day=len(day_precisions), num_night=len(night_precisions))
 
 if __name__ == "__main__":
     main()

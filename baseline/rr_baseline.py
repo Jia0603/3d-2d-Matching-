@@ -47,7 +47,7 @@ def compute_precision_recall(pred_matches, gt_matches):
     
     precision = (num_correct_precision / num_pred_eval) if num_pred_eval > 0 else None
 
-    return precision, recall
+    return precision, recall, num_gt, num_pred_eval, num_correct_precision
 
 def compute_rr_baseline(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, device):
 
@@ -63,7 +63,7 @@ def compute_rr_baseline(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc,
     feats0 = {
         "keypoints": torch.from_numpy(q_kpts).float().unsqueeze(0).to(device),
         "descriptors": torch.from_numpy(q_desc.T).float().unsqueeze(0).to(device),
-        "image_size": torch.tensor([q_img_size]).float().to(device)
+        "image_size": torch.from_numpy(np.array(q_img_size)).unsqueeze(0).float().to(device)
     }
     
     feats1 = {
@@ -175,7 +175,8 @@ def main():
                     depth_map = f_depth['depth'][:]
                     
                 gt_matches0, _ = compute_ground_truth_matches_soft(
-                    {"keypoints": q_kpts}, {"keypoints": p3d_kpts}, q_camera, depth_map
+                    {"keypoints": q_kpts}, {"keypoints": p3d_kpts}, q_camera, depth_map,
+                    pos_reproj_thresh=6.0, neg_reproj_thresh=12.0
                 )
 
                 # Reference camera pose

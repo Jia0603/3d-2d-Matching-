@@ -9,22 +9,11 @@
 
 import argparse
 import logging
-import pickle
-import numpy as np
 import torch
-import h5py
 from pathlib import Path
-from PIL import Image
-import pycolmap
-from hloc.utils import read_write_model as rw
-from utils.utils import qvec2rotmat
 from tqdm import tqdm
 from lightglue import LightGlue
-from baseline.pr_baseline import compute_pr_baseline
-from baseline.rr_baseline import compute_rr_baseline
-from baseline.rn_baseline import compute_rn_baseline
-from ground_truth.generate_gt_pairs_soft import load_query_cams
-from visualization.visualize_matches import compute_nn_baseline, load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d, get_most_similar_ref
+from visualization.visualize_matches import load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d, get_most_similar_ref
 from .pose_estimation import process_scene, log_metrics
 
 # Setup Logging
@@ -75,13 +64,18 @@ def main():
         
         t_errs, r_errs, fails, total = process_scene(scene, args, matchers, device, is_megadepth=False)
         
+        if total > 0:
+            log_metrics(t_errs, r_errs, fails, total, method_label=f"{method} - SCENE: {scene}")
+        
         all_t_errors.extend(t_errs)
         all_r_errors.extend(r_errs)
         global_failed_pnp_count += fails
         global_total_queries += total
 
-    # Print metrics
-    log_metrics(all_t_errors, all_r_errors, global_failed_pnp_count, global_total_queries, method)
+    if global_total_queries > 0:
+        log_metrics(all_t_errors, all_r_errors, global_failed_pnp_count, global_total_queries, 
+            method_label=f"{method} - CAMBRIDGE SUMMARY"
+        )
 
 if __name__ == "__main__":
     main()

@@ -23,6 +23,20 @@ from hloc.utils import viz_3d
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def normalize_keypoints(
+    kpts: torch.Tensor
+) -> torch.Tensor:
+    size = kpts.max(-2).values
+    if not isinstance(size, torch.Tensor):
+        size = torch.tensor(size, device=kpts.device, dtype=kpts.dtype)
+    size = size.to(kpts)
+
+    shift = size / 2
+    scale = size.max(-1).values / 2
+    kpts = (kpts - shift[..., None, :]) / scale[..., None, None]
+
+    return kpts
+
 # Normalization function for 3d points from ligthglu3d matchers
 def normalize_3d_with_quantile(
     kpts: torch.Tensor, quantile_value:float=0.975
@@ -250,6 +264,83 @@ def main():
     output_html = Path(f"normalization_check_3views_{scene}_2.html")
     fig.write_html(str(output_html))
     logger.info(f"HTML Visualization successfully saved to {output_html}")
+
+    # Original visualization
+    # Save in a new html
+    # Left is the original normalization, right is the updated normalization
+    logger.info("Generating Side-by-Side Normalization Comparison...")
+
+    orig_norm_pts_t = normalize_keypoints(raw_pts_tensor)
+    orig_norm_pts = orig_norm_pts_t.numpy()
+
+    # Calculate points inside valid [-1, 1] for original method
+    inside_orig = np.sum(np.all(np.abs(orig_norm_pts) <= 1.0, axis=1))
+    
+    logger.info("=" * 60)
+    logger.info("Original Normalization Stats: ")
+    logger.info(f"Points inside [-1, 1]     : {inside_orig} ({inside_orig/total_pts*100:.1f}%)")
+    logger.info("=" * 60 + "\n")
+
+    # Create html file with 2 views
+    fig_compare = make_subplots(
+        rows=1, cols=2, 
+        specs=[[{'type': 'scene'}, {'type': 'scene'}]],
+        subplot_titles=(
+            f"Original Normalization<br>Inside [-1,1]: {inside_orig/total_pts*100:.1f}%", 
+            f"Quantile Normalization + Pull<br>Inside [-1,1]: {inside_pulled/total_pts*100:.1f}%"
+        )
+    )
+
+    # Left: Original Normalization
+    fig_compare.add_trace(go.Scatter3d(
+        x=orig_norm_pts[:, 0], y=orig_norm_pts[:, 1], z=orig_norm_pts[:, 2],
+        mode='markers',
+        marker=dict(size=1.5, color=marker_colors, opacity=1.0),
+        name="Orig Normalized Points"
+    ), row=1, col=1)
+
+    # Standard [-1, 1] Box for reference
+    bx_valid, by_valid, bz_valid = create_box_frame([-1, -1, -1], [1, 1, 1])
+    fig_compare.add_trace(go.Scatter3d(
+        x=bx_valid, y=by_valid, z=bz_valid, mode='lines',
+        line=dict(color='green', width=1), name="Target [-1, 1] Region"
+    ), row=1, col=1)
+
+    # Right: Updated Normalization (Same as the right-most view from before)
+    fig_compare.add_trace(go.Scatter3d(
+        x=norm_pts_pulled[:, 0], y=norm_pts_pulled[:, 1], z=norm_pts_pulled[:, 2],
+        mode='markers',
+        marker=dict(size=1.5, color=marker_colors, opacity=1.0),
+        name="New Normalized Points"
+    ), row=1, col=2)
+
+    bx_valid_base, by_valid_base, bz_valid_base = create_box_frame(
+        [-pull_factor, -pull_factor, -pull_factor], 
+        [pull_factor, pull_factor, pull_factor]
+    )
+    fig_compare.add_trace(go.Scatter3d(
+        x=bx_valid_base, y=by_valid_base, z=bz_valid_base, mode='lines',
+        line=dict(color='blue', width=1), name="Base Valid Region"
+    ), row=1, col=2)
+
+    fig_compare.add_trace(go.Scatter3d(
+        x=bx_valid, y=by_valid, z=bz_valid, mode='lines',
+        line=dict(color='green', width=1), name="Target [-1, 1] Region"
+    ), row=1, col=2)
+
+    fig_compare.update_layout(
+        title=f"Normalization Comparison: Scene {scene} - {query_name}",
+        scene=dict(aspectmode='data'),
+        scene2=dict(aspectmode='data'),
+        height=700,
+        width=1200,
+        showlegend=True,
+        template="plotly_dark" 
+    )
+
+    output_html_compare = Path(f"normalization_comparison_{scene}.html")
+    fig_compare.write_html(str(output_html_compare))
+    logger.info(f"Comparison HTML successfully saved to {output_html_compare}")
 
 
 if __name__ == "__main__":

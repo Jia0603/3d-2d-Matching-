@@ -1,5 +1,6 @@
 # For baseline: NN(Nearest Neighbour), RR(Rotate+Remove_coord), 
 #               RN(Rotate+Normalize), PR(Project to Reference),
+#               PRC(PR change),
 #               HLOC(2D-2D LightGlue + Lift to 3D)  
 # For train: TRAIN(Lightglu3d two self and one bidirectional cross), 
 #            ADAPT(lightglue+adapter)
@@ -16,14 +17,15 @@ import h5py
 from pathlib import Path
 import pycolmap
 from hloc.utils import read_write_model as rw
-from utils.utils import qvec2rotmat
+from utils.utils import qvec2rotmat, get_most_similar_ref
 from tqdm import tqdm
 from lightglue import LightGlue
 from baseline.pr_baseline import compute_pr_baseline
 from baseline.pr_baseline_change import compute_pr_baseline_change
 from baseline.rr_baseline import compute_rr_baseline
 from baseline.rn_baseline import compute_rn_baseline
-from visualization.visualize_matches import compute_nn_baseline, load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d, get_most_similar_ref
+from baseline.nn_baseline import compute_nn_baseline
+from baseline.trained_matcher import load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d, compute_trained_lightglu3d_greedy_dynamic, compute_trained_lightglu3d_dynamic
 from .pose_estimation import compute_hloc_baseline
 
 # Setup Logging
@@ -156,7 +158,7 @@ def process_aachen(args, device):
         baseline_matcher = LightGlue(features='superpoint', depth_confidence=-1, width_confidence=-1).eval().to(device)
     elif method == "TRAIN":
         if args.checkpoint is None: raise ValueError("--checkpoint must be provided.")
-        lightglu3d_matcher = load_trained_lightglu3d(args.checkpoint, device)
+        lightglu3d_matcher = load_trained_lightglu3d(args.checkpoint, device, filter_threshold=0.015)
     elif method == "ADAPT":
         if args.checkpoint is None: raise ValueError("--checkpoint must be provided.")
         lightglu3d_adapt_matcher = load_trained_adapt(args.checkpoint, device)
@@ -292,9 +294,12 @@ def process_aachen(args, device):
             }
             pred_matches0, _, _, _, _ = compute_pr_baseline_change(baseline_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, q_camera_dict, device)
         elif method == "TRAIN":
-            pred_matches0 = compute_trained_lightglu3d(lightglu3d_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+            if args.greedy_or_mutual == 'greedy':
+                pred_matches0, _ = compute_trained_lightglu3d_greedy_dynamic(lightglu3d_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device, min_matches=args.min_matches)
+            else:  
+                pred_matches0, _ = compute_trained_lightglu3d_dynamic(lightglu3d_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device, min_matches=args.min_matches)
         elif method == "ADAPT":
-            pred_matches0 = compute_trained_lightglu3d(lightglu3d_adapt_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+            pred_matches0, _ = compute_trained_lightglu3d(lightglu3d_adapt_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
 
         # Pose estimation
         valid_mask = pred_matches0 > -1
@@ -316,7 +321,7 @@ def process_aachen(args, device):
                 num_inliers = len(pose_res['inliers']) if isinstance(pose_res['inliers'], list) else np.sum(pose_res['inliers'])
                 
                 logger.info(f"[DEBUG] PnP Success! Inliers: {num_inliers}")
-                
+
                 # Check against the dynamic HLOC reference
                 benchmark_name = Path(query_name).name
                 expected_pose = reference_poses.get(benchmark_name)
@@ -360,6 +365,7 @@ def process_aachen(args, device):
     logger.info(f"Failed PnP:         {failed_pnp_count}")
     logger.info("="*40)
 
+    # output_file = args.outputs / f"Aachen_v1_1_eval_{method}_{args.greedy_or_mutual}_{args.min_matches}_{args.name_extra}.txt"
     output_file = args.outputs / f"Aachen_v1_1_eval_{method}.txt"
     write_benchmark_file(estimated_poses, output_file)
 
@@ -373,8 +379,11 @@ def main():
     parser.add_argument('--outputs', type=Path, required=True, help="Where to save the final Benchmark .txt file")
     parser.add_argument('--method', type=str, required=True, choices=['NN', 'RR', 'RN', 'PR', 'PRC', 'TRAIN', 'ADAPT', 'HLOC'], help="Matching method")
     parser.add_argument('--checkpoint', type=str, default=None, help="Path to trained weights")
+    # parser.add_argument('--name_extra', type=str, default="", help="Extra name info to distinguish output files")
     parser.add_argument('--max_error', type=float, default=12.0, help="RANSAC Reprojection Error Threshold")
     parser.add_argument('--hloc_reference', type=Path, default=None, help="Path to HLOC generated txt file for coordinate verification")
+    parser.add_argument('--greedy_or_mutual', type=str, default='greedy', choices=['greedy', 'mutual'], help="Whether to use greedy or mutual filtering for the dynamic thresholding in the TRAIN method")
+    parser.add_argument('--min_matches', type=int, default=800, help="Minimum matches for dynamic LightGlue")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

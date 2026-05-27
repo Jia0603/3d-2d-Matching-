@@ -18,18 +18,21 @@ from pathlib import Path
 from PIL import Image
 import pycolmap
 from hloc.utils import read_write_model as rw
-from utils.utils import qvec2rotmat
+from utils.utils import qvec2rotmat, get_most_similar_ref
 from . import rerun_johanna as rru 
 from ground_truth.generate_gt_pairs_re import load_query_cams, compute_ground_truth_matches
-from gluefactory.models import get_model
 from lightglue import LightGlue
 from baseline.pr_baseline import compute_pr_baseline
 import matplotlib.pyplot as plt
 from lightglue import viz2d
 from lightglue.utils import rbd
-from baseline.rr_baseline import compute_rr_baseline
+from baseline.rr_baseline import compute_rr_baseline, compute_precision_recall
 from baseline.rn_baseline import compute_rn_baseline
-from gluefactory.models.matchers.lightglu3d_bicross import LightGlu3D
+from baseline.nn_baseline import compute_nn_baseline
+from baseline.trained_matcher import load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d
+from evaluation.pose_estimation_aachen import parse_aachen_cameras, load_reference_poses
+from ground_truth.generate_ref_gt_pairs_from_hloc_aachen import compute_ground_truth_matches_aachen
+from baseline.pr_baseline_change import compute_pr_baseline_change
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -42,99 +45,27 @@ class MockCamera:
         self.f = [params[0], params[1]]
         self.c = [params[2], params[3]]
 
-def get_most_similar_ref(query_name, pair_file_path):
-    with open(pair_file_path, 'r') as f:
-        for line in f:
-            parts = line.strip().split()
-            if len(parts) >= 2 and parts[0] == query_name:
-                return parts[1]
-    return None
+def get_image_path(dataset_path, dataset_type, scene, img_name, image_dir=None):
+    """Helper to resolve image paths between MegaDepth and Aachen structures."""
+    if dataset_type == "aachen":
+        if image_dir is not None:
+            p0 = image_dir / img_name
+            if p0.exists(): return p0
+            
+        p1 = dataset_path / "images" / "images_upright" / img_name
+        p2 = dataset_path / img_name
+        
+        return p1 if p1.exists() else p2
+    else:
+        return dataset_path / scene / "images" / img_name
 
-def compute_nn_baseline(q_desc, p3d_desc, device):
-    nn_conf = {
-        "name": "matchers.nearest_neighbor_matcher",
-        "mutual_check": True,
-        "ratio_thresh": None,
-        "distance_thresh": 0.75,
-    }
-    matcher = get_model(nn_conf["name"])(nn_conf).eval().to(device)
-
-    data = {
-        "descriptors0": torch.from_numpy(q_desc.T).unsqueeze(0).float().to(device),
-        "descriptors1": torch.from_numpy(p3d_desc.T).unsqueeze(0).float().to(device)
-    }
-
-    with torch.no_grad():
-        pred = matcher(data)
-    
-    pred_matches0 = pred['matches0'][0].cpu().numpy() 
-    return pred_matches0
-
-def load_trained_lightglu3d(checkpoint_path, device):
-    logger.info(f"Loading trained LightGlu3D from {checkpoint_path}...")
-    conf = {
-        "name": "lightglu3d_bicross", 
-        "input_dim": 256, 
-        "add_scale_ori": False,
-        "descriptor_dim": 256,
-        "n_layers": 9,
-        "num_heads": 4,
-        "flash": False,
-        "mp": False, 
-        "depth_confidence": -1, 
-        "width_confidence": -1, 
-        "filter_threshold": 0.1, 
-        "checkpointed": False,
-    }
-    matcher = LightGlu3D(conf).eval().to(device)
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    state_dict = checkpoint.get("model", checkpoint) 
-    matcher.load_state_dict(state_dict, strict=False)
-    return matcher
-
-def load_trained_adapt(checkpoint_path, device):
-    logger.info(f"Loading trained Adapter from {checkpoint_path}...")
-    conf = {
-        "name": "lightglue_adapt", 
-        "input_dim": 256, 
-        "descriptor_dim": 256,
-        "n_layers": 9,
-        "num_heads": 4,
-        "flash": False,
-        "mp": False, 
-        "depth_confidence": -1, 
-        "width_confidence": -1, 
-        "filter_threshold": 0.1, 
-        "checkpointed": False,
-    }
-    matcher = get_model(conf["name"])(conf).eval().to(device)
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    state_dict = checkpoint.get("model", checkpoint) 
-    matcher.load_state_dict(state_dict, strict=False)
-    return matcher
-
-def compute_trained_lightglu3d(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device):
-    data = {
-        "keypoints0": torch.from_numpy(q_kpts).unsqueeze(0).float().to(device),
-        "keypoints1": torch.from_numpy(p3d_kpts).unsqueeze(0).float().to(device),
-        "descriptors0": torch.from_numpy(q_desc.T).unsqueeze(0).float().to(device), 
-        "descriptors1": torch.from_numpy(p3d_desc.T).unsqueeze(0).float().to(device), 
-        "view0": {
-            "image_size": torch.from_numpy(q_img_size).unsqueeze(0).float().to(device)
-        }
-    }
-    with torch.no_grad():
-        pred = matcher(data)
-    
-    return pred['matches0'][0].cpu().numpy()
-
-
-def launch_rerun_visualization(pred_matches0, gt_matches0, q_kpts, p3d_kpts, raw_pts_np, raw_colors_np, scene, args, query_name, ref_name, camera, ref_pose_matrix, method_name="Baseline", est_pose_matrix=None):
+def launch_rerun_visualization(pred_matches0, gt_matches0, q_kpts, p3d_kpts, raw_pts_np, raw_colors_np, scene, args, query_name, ref_name, camera, ref_pose_matrix, img_query_path, img_ref_path, dataset_type, method_name="Baseline", est_pose_matrix=None):    
     logger.info(f"Initializing Rerun Analytics Dashboard for {method_name}...")
     
     # Initialize rerun
     query_stem = Path(query_name).stem
-    rr.init(f"Matches_Scene_{scene}_{method_name}_{query_stem}", spawn=False)
+    scene_label = scene if scene else "Aachen"
+    rr.init(f"Matches_Scene_{scene_label}_{method_name}_{query_stem}", spawn=False)
 
     # Calculate matches info using the generic 'pred_matches0'
     valid_pred = pred_matches0 > -1
@@ -147,7 +78,11 @@ def launch_rerun_visualization(pred_matches0, gt_matches0, q_kpts, p3d_kpts, raw
     idx_unmatchable = (~valid_pred) & (~valid_gt) # Ignored unmatchable points
 
     # Set up cameras and images
-    cameras, images, _ = rw.read_model(args.sfm_dir / scene / "sfm_superpoint+lightglue", ext=".bin")
+    if dataset_type == "aachen":
+        scene_sfm_dir = args.sfm_dir
+    else:
+        scene_sfm_dir = args.sfm_dir / scene if scene else args.sfm_dir
+    cameras, images, _ = rw.read_model(scene_sfm_dir / "sfm_superpoint+lightglue", ext=".bin")
     ref_image_obj = next((img for img in images.values() if img.name == ref_name), None)
     ref_cam_obj = cameras[ref_image_obj.camera_id]
     ref_poselib_cam = MockCamera(ref_cam_obj.width, ref_cam_obj.height, ref_cam_obj.params)
@@ -155,8 +90,9 @@ def launch_rerun_visualization(pred_matches0, gt_matches0, q_kpts, p3d_kpts, raw
     q_pose_matrix = np.hstack((qvec2rotmat(camera["qvec"]), np.array(camera["tvec"]).reshape(3, 1)))
     query_poselib_cam = MockCamera(camera["intrinsics"]["width"], camera["intrinsics"]["height"], camera["intrinsics"]["params"])
 
-    img_query = np.array(Image.open(args.dataset / scene / "images" / query_name).convert("RGB")) / 255.0
-    img_ref = np.array(Image.open(args.dataset / scene / "images" / ref_name).convert("RGB")) / 255.0
+    # Use the resolved image paths passed into the function
+    img_query = np.array(Image.open(img_query_path).convert("RGB")) / 255.0
+    img_ref = np.array(Image.open(img_ref_path).convert("RGB")) / 255.0
 
     rru.plot_scene(
         pts_3d=np.empty((0,3)), pts_2d=np.empty((0,2)),           
@@ -210,7 +146,7 @@ def launch_rerun_visualization(pred_matches0, gt_matches0, q_kpts, p3d_kpts, raw
     rr.log("world/Ground_Truth/Missed/Lines", rr.LineStrips3D(missed_lines, colors=[0, 150, 255, 80]))
 
     # Save .rrd file
-    output_filename = f"viz_{scene}_{method_name}_{query_stem}.rrd"
+    output_filename = f"viz_{scene_label}_{method_name}_{query_stem}.rrd"
     rr.save(output_filename)
     logger.info(f"Rerun .rrd file visualization saved to {output_filename}")
 
@@ -220,10 +156,21 @@ def visual_flat_sfm(res, q_kpts, p3d_flat_kpts, img_query, p3d_colors, flat_w, f
     # Create colored flat SfM image
     flat_img = np.ones((flat_h, flat_w, 3), dtype=np.float32)
     
+    point_radius = 2
     # Paint the 3D point colors onto the 2D image
     for (x, y), c in zip(p3d_flat_kpts.astype(int), p3d_colors):
-        if 0 <= y < flat_h and 0 <= x < flat_w:
-            flat_img[y, x] = c
+        # if 0 <= y < flat_h and 0 <= x < flat_w:
+        #    flat_img[y, x] = c
+
+        # Draw the image not outside of image, and change the radius to make the points more visible
+        y_min = max(0, y - point_radius)
+        y_max = min(flat_h, y + point_radius + 1)
+        x_min = max(0, x - point_radius)
+        x_max = min(flat_w, x + point_radius + 1)
+        
+        # Paint the block
+        if y_min < y_max and x_min < x_max:
+            flat_img[y_min:y_max, x_min:x_max] = c
 
     # Convert to format expected by LightGlue viz2d
     img_q_tensor = torch.from_numpy(img_query).float().permute(2, 0, 1)
@@ -250,8 +197,9 @@ def visual_flat_sfm(res, q_kpts, p3d_flat_kpts, img_query, p3d_colors, flat_w, f
         axes[1].set_xlim(0, flat_w)
         axes[1].set_ylim(flat_h, 0)
 
-    # Add method to the filename!
-    match_filename = f"flat_matches_scene_{scene}_{method}.png"
+    # Add method to the filename
+    scene_label = scene if scene else "Aachen"
+    match_filename = f"flat_matches_scene_{scene_label}_{method}.png"
     plt.savefig(match_filename, dpi=300, bbox_inches='tight', facecolor='black')
     plt.close()
 
@@ -270,8 +218,8 @@ def visual_flat_sfm(res, q_kpts, p3d_flat_kpts, img_query, p3d_colors, flat_w, f
             axes[1].set_xlim(0, flat_w)
             axes[1].set_ylim(flat_h, 0)
             
-        # Add method to the filename!
-        prune_filename = f"flat_pruning_scene_{scene}_{method}.png"
+        # Add method to the filename
+        prune_filename = f"flat_pruning_scene_{scene_label}_{method}.png"
         plt.savefig(prune_filename, dpi=300, bbox_inches='tight', facecolor='black')
         plt.close()
         
@@ -279,14 +227,18 @@ def visual_flat_sfm(res, q_kpts, p3d_flat_kpts, img_query, p3d_colors, flat_w, f
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize Matches in Rerun")
-    parser.add_argument('--dataset', type=Path, required=True, help="Path to Undistorted_SfM")
+    parser.add_argument('--dataset_type', type=str, default='megadepth', choices=['aachen', 'megadepth'])
+    parser.add_argument('--dataset', type=Path, required=True, help="Path to Undistorted_SfM or Aachen dataset root")
+    parser.add_argument('--image_dir', type=Path, default=None, help="Explicit path to images directory (useful for Aachen unzipped images)")
     parser.add_argument('--covisibility_dir', type=Path, required=True, help="Path to covisibility")
-    parser.add_argument('--query_dir', type=Path, required=True, help="Path to query")
+    parser.add_argument('--query_dir', type=Path, required=True, help="Path to query directory")
     parser.add_argument('--sfm_dir', type=Path, required=True, help="Path to sfm outputs")
-    parser.add_argument('--depth_dir', type=Path, required=True, help="Path to depth maps")
-    parser.add_argument('--scene', type=str, required=True)
-    parser.add_argument('--method', type=str, required=True, choices=['NN', 'RR', 'RN', 'PR', 'TRAIN', 'ADAPT'], 
-                        help="Matching method to evaluate: NN, RR, RN, PR, TRAIN or ADAPT")
+    parser.add_argument('--depth_dir', type=Path, help="Path to depth maps (Required for MegaDepth)")
+    parser.add_argument('--hloc_reference', type=Path, help="Path to hloc output (Required for Aachen GT)")
+    parser.add_argument('--scene', type=str, default="", help="Scene name (or 'day'/'night' for Aachen)")
+    parser.add_argument('--query_name', type=str, default=None, help="Optional: Specific query image name to visualize")
+    parser.add_argument('--method', type=str, required=True, choices=['NN', 'RR', 'RN', 'PR', 'PRC', 'TRAIN', 'ADAPT'], 
+                        help="Matching method to evaluate: NN, RR, RN, PR, PRC, TRAIN or ADAPT")
     parser.add_argument('--checkpoint', type=str, default=None, 
                         help="Path to trained network weights (Only required if method is TRAIN or ADAPT)")
     args = parser.parse_args()
@@ -294,35 +246,66 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     scene = args.scene
     method = args.method
-    logger.info(f"Starting Evaluation & Visualization for Scene {scene} using method: {method}")
+    scene_label = scene if scene else "Aachen"
+    logger.info(f"Starting Evaluation & Visualization for {scene_label} using method: {method}")
 
-    # Select a random query
-    query_names_file = args.query_dir / scene / "query_image_names_clean.txt"
-    with open(query_names_file, 'r') as f:
-        queries = [line.strip() for line in f if line.strip()]
-    query_name = random.choice(queries)
-    ref_name = get_most_similar_ref(query_name, args.covisibility_dir / scene / "most_similar_pairs.txt")
+    scene_query = args.query_dir / scene if (scene and args.query_dir and args.dataset_type != "aachen") else args.query_dir
+    scene_covis = args.covisibility_dir / scene if (scene and args.dataset_type != "aachen") else args.covisibility_dir
+    scene_sfm = args.sfm_dir / scene if (scene and args.dataset_type != "aachen") else args.sfm_dir
+
+    # Load the list of available queries based on dataset type
+    queries = []
+    if args.dataset_type == "aachen":
+        day_list_path = scene_query / "day_time_queries_with_intrinsics.txt"
+        night_list_path = scene_query / "night_time_queries_with_intrinsics.txt"
+        
+        # Filter queries based on scene argument ('day' or 'night')
+        if args.scene in ["day", ""] and day_list_path.exists():
+            with open(day_list_path, 'r') as f:
+                queries.extend([line.strip().split()[0] for line in f if line.strip() and not line.startswith("#")])
+        if args.scene in ["night", ""] and night_list_path.exists():
+            with open(night_list_path, 'r') as f:
+                queries.extend([line.strip().split()[0] for line in f if line.strip() and not line.startswith("#")])
+    else:
+        query_names_file = scene_query / "query_image_names_clean.txt"
+        with open(query_names_file, 'r') as f:
+            queries = [line.strip() for line in f if line.strip()]
+
+    # Pick the query (specific or random)
+    if args.query_name:
+        if args.query_name not in queries:
+            logger.error(f"Provided query '{args.query_name}' not found in the valid queries list.")
+            return
+        query_name = args.query_name
+    else:
+        query_name = random.choice(queries)
+
+    ref_name = get_most_similar_ref(query_name, scene_covis / "most_similar_pairs.txt")
     logger.info(f"Query: {query_name} | Reference: {ref_name}")
 
+    # Resolve image paths
+    img_query_path = get_image_path(args.dataset, args.dataset_type, scene, query_name, args.image_dir)
+    img_ref_path = get_image_path(args.dataset, args.dataset_type, scene, ref_name, args.image_dir)
+
     # Load query image
-    img_query_pil = Image.open(args.dataset / scene / "images" / query_name)
-    q_img_size = [img_query_pil.width, img_query_pil.height]
+    img_query_pil = Image.open(img_query_path)
+    q_img_size = np.array([img_query_pil.width, img_query_pil.height])
 
     # Load features
-    with h5py.File(args.sfm_dir / scene / "feats-superpoint-n2048.h5", "r") as f:
+    with h5py.File(scene_sfm / "feats-superpoint-n2048.h5", "r") as f:
         q_kpts = f[query_name]["keypoints"][:]
         q_desc = f[query_name]["descriptors"][:]
 
     # Load visible 3d points
-    sfm_model_path = args.sfm_dir / scene / "sfm_superpoint+lightglue"
+    sfm_model_path = scene_sfm / "sfm_superpoint+lightglue"
     reconstruction = pycolmap.Reconstruction(sfm_model_path)
 
-    with open(args.covisibility_dir / scene / "covisibility_results.pkl", "rb") as f:
+    with open(scene_covis / "covisibility_results.pkl", "rb") as f:
         visible_p3d = pickle.load(f)[query_name]["unique_points"]
 
     p3d_desc, p3d_kpts, raw_colors = [], [], []
 
-    with h5py.File(args.covisibility_dir / scene / "points3D_feats_cache.h5", "r") as f:
+    with h5py.File(scene_covis / "points3D_feats_cache.h5", "r") as f:
         for pid in visible_p3d:
             pid_int = int(pid)
             pid_str = str(pid)
@@ -340,15 +323,32 @@ def main():
     # Normalize colors for the flat image projection (0 to 1)
     raw_colors_np = np.vstack(raw_colors) / 255.0
 
-    # Calculate ground truth
-    query_cams = load_query_cams(args.query_dir / scene / "query_image_cameras.txt")
-    camera = query_cams[query_name]
-    with h5py.File(args.depth_dir / scene / f"{Path(query_name).stem}.h5", 'r') as f:
-        depth_map = f['depth'][:]
-        
-    gt_matches0, _ = compute_ground_truth_matches(
-        {"keypoints": q_kpts}, {"keypoints": p3d_kpts}, camera, depth_map
-    )
+    # Calculate ground truth dynamically based on dataset
+    if args.dataset_type == "aachen":
+        aachen_cams = parse_aachen_cameras(scene_query)
+        gt_poses = load_reference_poses(args.hloc_reference)
+        base_name = Path(query_name).name
+        raw_camera = aachen_cams[query_name]
+        gt_pose = gt_poses[base_name]
+        camera = {
+            "qvec": gt_pose["qvec"], "tvec": gt_pose["tvec"],
+            "intrinsics": {
+                "model": getattr(raw_camera, 'model_name', getattr(raw_camera.model, 'name', str(raw_camera.model))),
+                "width": raw_camera.width, "height": raw_camera.height, "params": raw_camera.params
+            }
+        }
+        gt_matches0, _ = compute_ground_truth_matches_aachen(
+            q_kpts, p3d_kpts, raw_camera, gt_pose, pos_reproj_thresh=3.0, neg_reproj_thresh=5.0
+        )
+    else:
+        query_cams = load_query_cams(scene_query / "query_image_cameras.txt")
+        camera = query_cams[query_name]
+        with h5py.File(args.depth_dir / scene / f"{Path(query_name).stem}.h5", 'r') as f:
+            depth_map = f['depth'][:]
+            
+        gt_matches0, _ = compute_ground_truth_matches(
+            {"keypoints": q_kpts}, {"keypoints": p3d_kpts}, camera, depth_map
+        )
 
     # Load Reference Camera Pose from SfM
     cameras, images, _ = rw.read_model(sfm_model_path, ext=".bin")
@@ -358,7 +358,7 @@ def main():
     ref_cam_obj = cameras[ref_image_obj.camera_id]
 
     # Initialize standard LightGlue for the projection baselines
-    if method in ["RR", "RN", "PR"]:
+    if method in ["RR", "RN", "PR", "PRC"]:
         logger.info("Initializing standard LightGlue for baseline evaluation...")
         baseline_matcher = LightGlue(features='superpoint', depth_confidence=-1, width_confidence=-1).eval().to(device)
     if method == "TRAIN":
@@ -368,7 +368,7 @@ def main():
         logger.info("Loaded trained LightGlue_Adapt model for evaluation...")
         lightglu3_adapt_matcher = load_trained_adapt(args.checkpoint, device)
 
-    # Get the predected mathces
+    # Get the predicted matches
     if method == "NN":
         pred_matches0 = compute_nn_baseline(q_desc, p3d_desc, device)
     elif method == "RR":
@@ -383,40 +383,39 @@ def main():
         pred_matches0, res, p3d_flat_kpts, flat_w, flat_h = compute_pr_baseline(
             baseline_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, ref_cam_obj, device
         )
+    elif method == "PRC":
+        pred_matches0, res, p3d_flat_kpts, flat_w, flat_h = compute_pr_baseline_change(
+            baseline_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, camera, device
+        )
     elif method == "TRAIN":
         if args.checkpoint is None:
             raise ValueError("--checkpoint must be provided when using the TRAIN method.")
-        pred_matches0 = compute_trained_lightglu3d(lightglu3d_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+        pred_matches0, _ = compute_trained_lightglu3d(lightglu3d_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
     elif method == "ADAPT":
         if args.checkpoint is None:
             raise ValueError("--checkpoint must be provided when using the ADAPT method.")
-        pred_matches0 = compute_trained_lightglu3d(lightglu3_adapt_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+        pred_matches0, _ = compute_trained_lightglu3d(lightglu3_adapt_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
     
     # Evaluate metrics
-    valid_pred = pred_matches0 > -1
-    valid_gt = gt_matches0 > -1
-    correct_matches = (pred_matches0 == gt_matches0) & valid_gt
+    precision, recall, num_gt, num_pred, num_correct = compute_precision_recall(pred_matches0, gt_matches0)
 
-    num_pred = valid_pred.sum()
-    num_gt = valid_gt.sum()
-    num_correct = correct_matches.sum()
-
-    precision = num_correct / num_pred if num_pred > 0 else 0
-    recall = num_correct / num_gt if num_gt > 0 else 0
+    # Handle None values gracefully for formatting
+    disp_precision = precision if precision is not None else 0.0
+    disp_recall = recall if recall is not None else 0.0
 
     logger.info("="*30)
     logger.info(f"{method} Results:")
     logger.info(f"GT Matches:        {num_gt}")
     logger.info(f"Predicted Matches: {num_pred}")
     logger.info(f"Correct Matches:   {num_correct}")
-    logger.info(f"Precision:         {precision:.4f}")
-    logger.info(f"Recall:            {recall:.4f}")
+    logger.info(f"Precision:         {disp_precision:.4f}")
+    logger.info(f"Recall:            {disp_recall:.4f}")
     logger.info("="*30)
 
     # Launch 2D flat images
-    if method in ["RR", "RN", "PR"]:
-        img_query = np.array(img_query_pil.convert("RGB")) / 255.0
-        visual_flat_sfm(res, q_kpts, p3d_flat_kpts, img_query, raw_colors_np, flat_w, flat_h, scene, method)
+    if method in ["RR", "RN", "PR", "PRC"]:
+        img_query_np = np.array(img_query_pil.convert("RGB")) / 255.0
+        visual_flat_sfm(res, q_kpts, p3d_flat_kpts, img_query_np, raw_colors_np, flat_w, flat_h, scene, method)
 
     # Launch rerun
     launch_rerun_visualization(
@@ -427,6 +426,9 @@ def main():
         scene=scene, args=args, query_name=query_name, ref_name=ref_name, 
         camera=camera,
         ref_pose_matrix=ref_pose_matrix,
+        img_query_path=img_query_path,
+        img_ref_path=img_ref_path,
+        dataset_type=args.dataset_type,
         method_name=method
     )
 

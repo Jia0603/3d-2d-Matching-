@@ -162,102 +162,114 @@ def compute_ground_truth_matches(
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1
 
-def compute_ground_truth_matches_soft(
-        query_feats, p3d_feats, camera, depth_map=None, 
-        pos_reproj_thresh=3.0, neg_reproj_thresh=5.0, 
-        pos_depth_thresh=0.1, neg_depth_thresh=0.25
-    ):
+def compute_ground_truth_matches_soft(query_feats, p3d_feats, camera, depth_map=None, pos_reproj_thresh=3.0, neg_reproj_thresh=8.0, pos_depth_thresh =0.1, neg_depth_thresh=0.25):
+        """
+        Vectorized PyTorch implementation of GT matching with Soft Thresholds.
+        """
 
-    kpts2d = query_feats["keypoints"]      # (N2D, 2)
-    pts3d = p3d_feats["keypoints"]         # (N3D, 3)
+        IGNORE_FEATURE = -2
+        UNMATCHED_FEATURE = -1
 
-    N2D = kpts2d.shape[0]
-    N3D = pts3d.shape[0]
+        kpts2d = torch.from_numpy(query_feats["keypoints"]).float() # (N2D, 2)
+        pts3d = torch.from_numpy(p3d_feats["keypoints"]).float()    # (N3D, 3)
 
-    # Initialize all points as unmatched (-1)
-    matches0 = np.full(N2D, UNMATCHED_FEATURE, dtype=int)
-    matches1 = np.full(N3D, UNMATCHED_FEATURE, dtype=int)
+        N2D, N3D = kpts2d.shape[0], pts3d.shape[0]
 
-    if N3D == 0:
-        return matches0, matches1
+        # Initialize with -1
+        matches0 = torch.full((N2D,), UNMATCHED_FEATURE, dtype=torch.long)
+        matches1 = torch.full((N3D,), UNMATCHED_FEATURE, dtype=torch.long)
 
-    # Pose and intrinsics setup
-    R = qvec2rotmat(camera["qvec"])
-    t = np.array(camera["tvec"]).reshape(3, 1)
-    params = camera["intrinsics"]["params"]
-    fx, fy, cx, cy = params[:4]
-    width = camera["intrinsics"]["width"]
-    height = camera["intrinsics"]["height"]
+        if N3D == 0:
+            return matches0.numpy(), matches1.numpy()
 
-    # Project 3D points
-    X = pts3d.T 
-    X_cam = R @ X + t 
-    z = X_cam[2]
-    valid = z > 0 
+        # Pose and intrinsics
+        R = torch.from_numpy(qvec2rotmat(camera["qvec"])).float()
+        t = torch.tensor(camera["tvec"]).float().view(3, 1)
 
-    X_cam = X_cam[:, valid]
-    z = z[valid]
+        fx, fy, cx, cy = camera["intrinsics"]["params"][:4]
+        width, height = camera["intrinsics"]["width"], camera["intrinsics"]["height"]
 
-    u = fx * (X_cam[0] / z) + cx
-    v = fy * (X_cam[1] / z) + cy
-
-    valid_proj = (
-        (u >= 0) & (u < width) &
-        (v >= 0) & (v < height)
-    )
-
-    u = u[valid_proj]
-    v = v[valid_proj]
-    z = z[valid_proj]
-    valid_indices = np.where(valid)[0][valid_proj]
-
-    # Check depth consistency
-    rel_error = np.zeros_like(z) 
-    has_valid_depth = np.zeros_like(z, dtype=bool)
-
-    if depth_map is not None:
-        depth_real = sample_depth_bilinear(depth_map, u, v)
-        has_valid_depth = depth_real > 0
-        rel_error = np.full_like(depth_real, np.inf)
-        rel_error[has_valid_depth] = (
-            np.abs(z[has_valid_depth] - depth_real[has_valid_depth])
-            / depth_real[has_valid_depth]
-        ).flatten()
-
-    projected = np.stack([u.flatten(), v.flatten()], axis=1)
-    tree = cKDTree(kpts2d)
+        # Vectorized 3D projection
+        X = pts3d.T # (3, N3D)
+        X_cam = R @ X + t # (3, N3D)
         
-    dists, min_indices = tree.query(projected, distance_upper_bound=neg_reproj_thresh)
+        z = X_cam[2, :]
+        valid_z = z > 0
         
-    for idx3d, min_idx_2d, dist, r_err, valid_d in zip(valid_indices, min_indices, dists, rel_error, has_valid_depth):
-        if min_idx_2d < N2D: 
+        # Avoid division by zero for invalid z
+        z_safe = torch.where(valid_z, z, torch.ones_like(z))
+        
+        u = fx * (X_cam[0, :] / z_safe) + cx
+        v = fy * (X_cam[1, :] / z_safe) + cy
+
+        valid_proj = valid_z & (u >= 0) & (u < width) & (v >= 0) & (v < height)
+
+        # Depth check arrays
+        has_valid_depth = torch.zeros(N3D, dtype=torch.bool)
+        rel_error = torch.full((N3D,), float('inf'))
+
+        if depth_map is not None:
+            # Only sample depth for points that landed inside the image bounds
+            u_np, v_np = u[valid_proj].numpy(), v[valid_proj].numpy()
             
-            # If have valid depth
-            if valid_d:
-                # STRICT match
-                if dist <= pos_reproj_thresh and r_err <= pos_depth_thresh:
-                    if matches0[min_idx_2d] in [UNMATCHED_FEATURE, IGNORE_FEATURE]:
-                        matches0[min_idx_2d] = idx3d
-                        matches1[idx3d] = min_idx_2d
+            if len(u_np) > 0:
+                depth_real = sample_depth_bilinear(depth_map, u_np, v_np)
+                depth_real_t = torch.from_numpy(depth_real).float()
                 
-                # IGNORE match (Smudged edges / slight misalignment)
-                elif dist <= neg_reproj_thresh and r_err <= neg_depth_thresh:
-                    if matches0[min_idx_2d] == UNMATCHED_FEATURE:
-                        matches0[min_idx_2d] = IGNORE_FEATURE
-                    if matches1[idx3d] == UNMATCHED_FEATURE:
-                        matches1[idx3d] = IGNORE_FEATURE
-            
-            # If missing depth
-            else:
-                # If the 2D reprojection is close, it might be a valid match.
-                # So set it to Ignore (-2) so the network isn't penalized.
-                if dist <= neg_reproj_thresh:
-                    if matches0[min_idx_2d] == UNMATCHED_FEATURE:
-                        matches0[min_idx_2d] = IGNORE_FEATURE
-                    if matches1[idx3d] == UNMATCHED_FEATURE:
-                        matches1[idx3d] = IGNORE_FEATURE
+                valid_d = depth_real_t > 0
+                
+                z_valid = z[valid_proj]
+                rel_err_valid = torch.full_like(depth_real_t, float('inf'))
+                rel_err_valid[valid_d] = torch.abs(z_valid[valid_d] - depth_real_t[valid_d]) / depth_real_t[valid_d]
+                
+                # Scatter back to the original N3D sized arrays
+                rel_error[valid_proj] = rel_err_valid
+                has_valid_depth[valid_proj] = valid_d
+                # Filter the points that have depth but bigger than neg_thresh
+                depth_is_totally_wrong = has_valid_depth & (rel_error > neg_depth_thresh)
+                valid_proj &= (~depth_is_totally_wrong)
+        # Combine u,v into (N3D, 2)
+        projected = torch.stack([u, v], dim=1)
+        
+        # Vectorized Distance Matrix Calculation
+        dist_matrix = torch.cdist(projected.unsqueeze(0), kpts2d.unsqueeze(0)).squeeze(0) # -> (N3D, N2D)
+        
+        # Mask out points that projected behind the camera or off-screen
+        dist_matrix[~valid_proj] = float('inf')
 
-    return matches0, matches1
+        # Prepare for MNN assignment
+        min_dist_3d_indices_for_2d = torch.argmin(dist_matrix, dim=0)
+        min_dist_2d_indices_for_3d = torch.argmin(dist_matrix, dim=1)
+        has_dist_mask = dist_matrix <= neg_reproj_thresh
+        valid_2d_indices = torch.where(has_dist_mask)[1].unique()
+        
+        for idx2d in valid_2d_indices: # loop over valid 2d kpts
+            # first assign all the existing mathes < neg_reproj_thresh as IGNORED
+            has_dist_3d_idx = torch.where(has_dist_mask[:, idx2d])[0]
+            if matches0[idx2d] == UNMATCHED_FEATURE:
+                matches0[idx2d] = IGNORE_FEATURE
+            for id in has_dist_3d_idx:
+                if matches1[id] == UNMATCHED_FEATURE:
+                    matches1[id] = IGNORE_FEATURE
+
+            min_dist_3d_idx = min_dist_3d_indices_for_2d[idx2d]
+            is_mutual = (min_dist_2d_indices_for_3d[min_dist_3d_idx] == idx2d)
+            if is_mutual:
+            # If mutual nearest neighbours, check if assigned as STRICT
+                cur_min_dist = dist_matrix[min_dist_3d_idx, idx2d]
+                r_err = rel_error[min_dist_3d_idx]
+                valid_d = has_valid_depth[min_dist_3d_idx]
+                if valid_d: # if has depth
+                    if cur_min_dist <= pos_reproj_thresh and r_err <= pos_depth_thresh:
+                        if (matches0[idx2d] in [UNMATCHED_FEATURE, IGNORE_FEATURE]) and \
+                            (matches1[min_dist_3d_idx] in [UNMATCHED_FEATURE, IGNORE_FEATURE]):
+                            matches0[idx2d] = min_dist_3d_idx
+                            matches1[min_dist_3d_idx] = idx2d
+                else: # if no depth provided
+                    if matches1[min_dist_3d_idx] == UNMATCHED_FEATURE:
+                        matches1[min_dist_3d_idx] = IGNORE_FEATURE
+
+        return matches0.numpy(), matches1.numpy()
 
 def load_depth(depth_path):
     with h5py.File(depth_path, 'r') as f:

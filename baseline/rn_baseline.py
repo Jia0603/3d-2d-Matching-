@@ -59,7 +59,7 @@ def compute_rn_baseline(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc,
     feats0 = {
         "keypoints": torch.from_numpy(q_kpts).float().unsqueeze(0).to(device),
         "descriptors": torch.from_numpy(q_desc.T).float().unsqueeze(0).to(device),
-        "image_size": torch.tensor([q_img_size]).float().to(device)
+        "image_size": torch.from_numpy(np.array(q_img_size)).unsqueeze(0).float().to(device)
     }
     
     feats1 = {

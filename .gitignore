@@ -1,8 +1,8 @@
 outputs/
-# 忽略所有的 SfM 输出日志文件
+# ignore all log files
 *.log
 
-# 忽略 SfM_htmls 文件夹及其内容
+# ignore SfM_htmls
 SfM_htmls/
 
 # ignore query sets and its contents
@@ -14,3 +14,7 @@ log_file/
 # ignore debug files
 debug_h5.py
 count_depth_num.pyvisualization/network_weights/*.tar
+
+# ignore pycache
+__pycache__/
+*/__pycache__/

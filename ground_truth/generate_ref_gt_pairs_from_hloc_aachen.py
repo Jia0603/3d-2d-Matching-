@@ -19,7 +19,7 @@ UNMATCHED_FEATURE = -1
 
 def compute_ground_truth_matches_aachen(
         kpts2d, pts3d, camera, gt_pose, 
-        pos_reproj_thresh=3.0, neg_reproj_thresh=5.0
+        pos_reproj_thresh=3.0, neg_reproj_thresh=8.0
     ): # Skip the depth threshld
     
     N2D = kpts2d.shape[0]
@@ -152,7 +152,7 @@ def process_aachen_gt(args):
         match_counts.append(num_strict_matches)
         ignore_counts.append(np.sum(matches0 == IGNORE_FEATURE))
         
-        # NEW: Log if the query has 0 strict matches
+        # Log if the query has 0 strict matches
         if num_strict_matches == 0:
             if "day" in full_query_name.lower():
                 zero_gt_day += 1
@@ -162,7 +162,7 @@ def process_aachen_gt(args):
     feats_2d_h5.close()
     feats_3d_h5.close()
 
-    output_file = args.outputs / "aachen_ref_ground_truth.pkl"
+    output_file = args.outputs / "aachen_ref_ground_truth_6_12.pkl"
     with open(output_file, "wb") as f:
         pickle.dump(scene_gt_data, f)
 
@@ -186,8 +186,9 @@ def main():
     parser.add_argument('--covisibility_dir', type=Path, required=True, help="Path to covisibility results")
     parser.add_argument('--outputs', type=Path, required=True, help="Directory to save GT file")
     parser.add_argument('--hloc_reference', type=Path, required=True, help="Path to Aachen-v1.1_hloc_superpoint+superglue_netvlad50.txt")
-    parser.add_argument('--pos_reproj_thresh', type=float, default=3.0, help="Pixel distance for STRICT match")
-    parser.add_argument('--neg_reproj_thresh', type=float, default=5.0, help="Pixel distance to IGNORE")
+    parser.add_argument('--pos_reproj_thresh', type=float, default=6.0, help="Pixel distance for STRICT match")
+    parser.add_argument('--neg_reproj_thresh', type=float, default=12.0, help="Pixel distance to IGNORE")
+    # Set pos_reproj_thresh as 6.0 and neg_reproj_thresh as 12.0 based on statistics results
     args = parser.parse_args()
 
     args.outputs.mkdir(parents=True, exist_ok=True)

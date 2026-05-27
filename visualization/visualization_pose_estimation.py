@@ -21,19 +21,27 @@ import pycolmap
 import rerun as rr
 from . import rerun_johanna as rru 
 from hloc.utils import read_write_model as rw
-from utils.utils import qvec2rotmat
+from utils.utils import qvec2rotmat, get_most_similar_ref
 from ground_truth.generate_gt_pairs_re import load_query_cams
 from lightglue import LightGlue
 import matplotlib.pyplot as plt
 from baseline.pr_baseline import compute_pr_baseline
 from baseline.rr_baseline import compute_rr_baseline
 from baseline.rn_baseline import compute_rn_baseline
-from visualization.visualize_matches import MockCamera, compute_nn_baseline, load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d, get_most_similar_ref
+from baseline.nn_baseline import compute_nn_baseline
+from baseline.trained_matcher import load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d
 from evaluation.pose_estimation import compute_hloc_baseline, evaluate_pose
+from baseline.pr_baseline_change import compute_pr_baseline_change
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+class MockCamera:
+    def __init__(self, width, height, params):
+        self.size = [width, height]
+        self.f = [params[0], params[1]]
+        self.c = [params[2], params[3]]
 
 def print_camera_pose(R_gt, t_gt, R_est, t_est):
     logger.info("="*40)
@@ -121,7 +129,7 @@ def main():
     parser.add_argument('--query_dir', type=Path, required=True)
     parser.add_argument('--sfm_dir', type=Path, required=True)
     parser.add_argument('--scene', type=str, required=True)
-    parser.add_argument('--method', type=str, required=True, choices=['NN', 'RR', 'RN', 'PR', 'HLOC', 'TRAIN', 'ADAPT'])
+    parser.add_argument('--method', type=str, required=True, choices=['NN', 'RR', 'RN', 'PR', 'PRC', 'TRAIN', 'ADAPT'])
     parser.add_argument('--checkpoint', type=str, default=None)
     parser.add_argument('--max_error', type=float, default=3.0, help="RANSAC Reprojection Error Threshold (pixels)")
     parser.add_argument('--num_hloc_refs', type=int, default=5, help="Number of reference images for HLOC aggregation")
@@ -224,7 +232,7 @@ def main():
     camera = query_cams[query_name]
 
     # Initialize Models
-    if method in ["RR", "RN", "PR", "HLOC"]:
+    if method in ["RR", "RN", "PR", "PRC", "HLOC"]:
         baseline_matcher = LightGlue(features='superpoint', depth_confidence=-1, width_confidence=-1).eval().to(device)
     if method == "TRAIN":
         lightglu3d_matcher = load_trained_lightglu3d(args.checkpoint, device)
@@ -259,10 +267,12 @@ def main():
             pred_matches0, _, _, _, _ = compute_rn_baseline(baseline_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, device)
         elif method == "PR":
             pred_matches0, _, _, _, _ = compute_pr_baseline(baseline_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, ref_cam_obj, device)
+        elif method == "PRC":
+            pred_matches0, _, _, _, _ = compute_pr_baseline_change(baseline_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, camera, device)
         elif method == "TRAIN":
-            pred_matches0 = compute_trained_lightglu3d(lightglu3d_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+            pred_matches0, _ = compute_trained_lightglu3d(lightglu3d_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
         elif method == "ADAPT":
-            pred_matches0 = compute_trained_lightglu3d(lightglu3d_adapt_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+            pred_matches0, _ = compute_trained_lightglu3d(lightglu3d_adapt_matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
 
     # Evaluate Pose
     valid_mask = pred_matches0 > -1

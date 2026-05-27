@@ -1,1 +1,5 @@
+KingsCollege
+ShopFacade
 StMarysChurch
+GreatCourt
+OldHospital

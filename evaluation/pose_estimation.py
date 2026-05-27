@@ -17,14 +17,15 @@ from pathlib import Path
 from PIL import Image
 import pycolmap
 from hloc.utils import read_write_model as rw
-from utils.utils import qvec2rotmat
+from utils.utils import qvec2rotmat, get_most_similar_ref
 from tqdm import tqdm
 from lightglue import LightGlue
 from baseline.pr_baseline import compute_pr_baseline
 from baseline.rr_baseline import compute_rr_baseline
 from baseline.rn_baseline import compute_rn_baseline
 from ground_truth.generate_gt_pairs_soft import load_query_cams
-from visualization.visualize_matches import compute_nn_baseline, load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d, get_most_similar_ref
+from baseline.nn_baseline import compute_nn_baseline
+from baseline.trained_matcher import load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -221,7 +222,7 @@ def process_scene(scene, args, matchers, device, is_megadepth=True):
         # Load query images and features
         img_query_path = img_dir_base / query_name
         img_query_pil = Image.open(img_query_path)
-        q_img_size = [img_query_pil.width, img_query_pil.height]
+        q_img_size = np.array([img_query_pil.width, img_query_pil.height])
         
         features_path = args.sfm_dir / scene / "feats-superpoint-n2048.h5"
         
@@ -285,9 +286,9 @@ def process_scene(scene, args, matchers, device, is_megadepth=True):
         elif args.method == "PR":
             pred_matches0, _, _, _, _ = compute_pr_baseline(matchers['baseline'], q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, ref_cam_obj, device)
         elif args.method == "TRAIN":
-            pred_matches0 = compute_trained_lightglu3d(matchers['lightglu3d'], q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+            pred_matches0, _ = compute_trained_lightglu3d(matchers['lightglu3d'], q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
         elif args.method == "ADAPT":
-            pred_matches0 = compute_trained_lightglu3d(matchers['adapt'], q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
+            pred_matches0, _ = compute_trained_lightglu3d(matchers['adapt'], q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device)
 
         # Pose estimation
         valid_mask = pred_matches0 > -1
@@ -297,7 +298,14 @@ def process_scene(scene, args, matchers, device, is_megadepth=True):
         pose_res = evaluate_pose(matched_2d, matched_3d, camera, q_img_size, args.max_error)
     
         if pose_res is not None:
-            t_errors.append(pose_res["t_error"])
+            t_err = pose_res["t_error"]
+            # Apply val scaler here
+            if is_megadepth:
+                if scene == "0015":
+                    t_err *= 16.0
+                elif scene == "0022":
+                    t_err *= 8.0
+            t_errors.append(t_err)
             r_errors.append(pose_res["r_error_deg"])
         else:
             failed_pnp_count += 1

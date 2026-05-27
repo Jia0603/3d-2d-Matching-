@@ -33,3 +33,11 @@ def qvec2rotmat(qvec):
         [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x**2 + y**2)]
     ])
     return R
+
+def get_most_similar_ref(query_name, pair_file_path):
+    with open(pair_file_path, 'r') as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0] == query_name:
+                return parts[1]
+    return None

@@ -54,7 +54,6 @@ def compute_pr_baseline_change(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3
 
     p3d_proj_kpts = np.column_stack((p3d_proj_x, p3d_proj_y))
 
-    # Use Query canvas dimensions
     proj_w, proj_h = intrinsics["width"], intrinsics["height"]
 
     # Format in LightGlue
@@ -117,7 +116,7 @@ def main():
         
         pair_dict = load_similar_pairs(args.covisibility_dir / scene / "most_similar_pairs.txt")
 
-        sfm_cameras, sfm_images, _ = rw.read_model(args.sfm_dir / scene / "sfm_superpoint+lightglue", ext=".bin")
+        _, sfm_images, _ = rw.read_model(args.sfm_dir / scene / "sfm_superpoint+lightglue", ext=".bin")
         query_cams = load_query_cams(args.query_dir / scene / "query_image_cameras.txt")
         
         # Load covisibility
@@ -173,9 +172,7 @@ def main():
                 with h5py.File(depth_file, 'r') as f_depth:
                     depth_map = f_depth['depth'][:]
                     
-                gt_matches0, _ = compute_ground_truth_matches_soft(
-                    {"keypoints": q_kpts}, {"keypoints": p3d_kpts}, q_camera, depth_map
-                )
+                gt_matches0, _ = compute_ground_truth_matches_soft({"keypoints": q_kpts}, {"keypoints": p3d_kpts}, q_camera, depth_map)
 
                 # Reference camera pose
                 ref_image_obj = next((img for img in sfm_images.values() if img.name == ref_name), None)
@@ -184,14 +181,11 @@ def main():
                 ref_R = qvec2rotmat(ref_image_obj.qvec)
                 ref_pose_matrix = np.hstack((ref_R, ref_image_obj.tvec.reshape(3, 1)))
 
-                # Run changed PR baseline (Reference Pose + Query Intrinsics)
-                pr_matches0, res, p3d_proj_kpts, proj_w, proj_h = compute_pr_baseline_change(
-                    matcher, q_kpts, q_desc, q_img_size, 
-                    p3d_kpts, p3d_desc, ref_pose_matrix, q_camera, device
-                )
+                # Run changed PR baseline
+                pr_matches0, _, _, _, _ = compute_pr_baseline_change(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, q_camera, device)
 
                 # Metrics
-                precision, recall = compute_precision_recall(pr_matches0, gt_matches0)
+                precision, recall, _, _, _ = compute_precision_recall(pr_matches0, gt_matches0)
                 if precision is not None:
                     scene_precisions.append(precision)
                 if recall is not None:

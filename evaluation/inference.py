@@ -15,6 +15,7 @@ from tqdm import tqdm
 from ground_truth.generate_gt_pairs_by_scene import load_query_cams, compute_ground_truth_matches_soft
 from visualization.visualize_matches import load_trained_lightglu3d, load_trained_adapt, compute_trained_lightglu3d
 from baseline.rr_baseline import load_similar_pairs, compute_precision_recall
+from .sigma_distribution import show_results_with_sigma
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -51,6 +52,9 @@ def main():
 
     overall_precisions = []
     overall_recalls = []
+    # Trackers for matchability (sigma)
+    all_sigma0 = []
+    all_sigma1 = []
 
     # Process each scene
     for scene in scenes:
@@ -117,7 +121,7 @@ def main():
 
                 # Compute ground truth
                 q_camera = query_cams[query_name]
-                q_img_size = [q_camera["intrinsics"]["width"], q_camera["intrinsics"]["height"]]
+                q_img_size = np.array([q_camera["intrinsics"]["width"], q_camera["intrinsics"]["height"]])
                 
                 depth_file = args.depth_dir / scene / f"{Path(query_name).stem}.h5"
                 if not depth_file.exists():
@@ -130,12 +134,21 @@ def main():
                 )
 
                 # Predict matches using the pre-loaded neural network
-                pred_matches0 = compute_trained_lightglu3d(
+                pred_matches0, score_matrix = compute_trained_lightglu3d(
                     matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, device
                 )
+
+                # Show sigma
+                dustbin_scores0 = score_matrix[:-1, -1] # Unmatched confidence for 2D
+                dustbin_scores1 = score_matrix[-1, :-1] # Unmatched confidence for 3D
+                # Reverse the math to get Sigma [0, 1]
+                sigma0 = 1.0 - np.exp(dustbin_scores0)
+                sigma1 = 1.0 - np.exp(dustbin_scores1)
+                all_sigma0.append(sigma0)
+                all_sigma1.append(sigma1)
                 
                 # Compute precision and recall
-                precision, recall = compute_precision_recall(pred_matches0, gt_matches0)
+                precision, recall, _, _, _ = compute_precision_recall(pred_matches0, gt_matches0)
                 if precision is not None:
                     scene_precisions.append(precision)
                 if recall is not None:
@@ -166,6 +179,8 @@ def main():
     else:
         logger.error("No valid queries were evaluated. Please check your data paths.")
     logger.info("="*40)
+
+    show_results_with_sigma(all_sigma0, all_sigma1, num_queries=len(overall_precisions), prefix="test")
 
 if __name__ == "__main__":
     main()

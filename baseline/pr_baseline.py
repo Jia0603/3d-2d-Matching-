@@ -177,9 +177,7 @@ def main():
                 with h5py.File(depth_file, 'r') as f_depth:
                     depth_map = f_depth['depth'][:]
                     
-                gt_matches0, _ = compute_ground_truth_matches_soft(
-                    {"keypoints": q_kpts}, {"keypoints": p3d_kpts}, q_camera, depth_map
-                )
+                gt_matches0, _ = compute_ground_truth_matches_soft({"keypoints": q_kpts}, {"keypoints": p3d_kpts}, q_camera, depth_map)
 
                 # Reference camera pose and intrinsics
                 ref_image_obj = next((img for img in sfm_images.values() if img.name == ref_name), None)
@@ -190,10 +188,7 @@ def main():
                 ref_cam_obj = sfm_cameras[ref_image_obj.camera_id]
 
                 # Run PR baseline
-                pr_matches0, res, p3d_proj_kpts, ref_w, ref_h = compute_pr_baseline(
-                    matcher, q_kpts, q_desc, q_img_size, 
-                    p3d_kpts, p3d_desc, ref_pose_matrix, ref_cam_obj, device
-                )
+                pr_matches0, _, _, _, _ = compute_pr_baseline(matcher, q_kpts, q_desc, q_img_size, p3d_kpts, p3d_desc, ref_pose_matrix, ref_cam_obj, device)
 
                 # Metrics
                 precision, recall = compute_precision_recall(pr_matches0, gt_matches0)
