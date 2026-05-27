@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 import torch
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 torch.set_num_threads(1)
 
 def load_query_cams(query_pose_path):
@@ -69,13 +70,15 @@ def sample_depth_bilinear(depth_map, u, v):
     return sampled.squeeze().numpy()
 
 def compute_ground_truth_matches(
-        query_feats, p3d_feats, camera, depth_map=None, reproj_thresh=3.0, depth_rel_thresh=0.1
+        query_feats, p3d_feats, camera, depth_map=None, 
+        pos_reproj_thresh=3.0, pos_depth_thresh=0.1, neg_reproj_thresh=8.0, neg_depth_thresh=0.25
         ):
     """
-    return:
-        matches0: (N2D,)
-        matches1: (N3D,)
+    Vectorized PyTorch implementation of GT matching with Soft Thresholds.
     """
+
+    IGNORE_FEATURE = -2
+    UNMATCHED_FEATURE = -1
 
     kpts2d = query_feats["keypoints"]      # (N2D, 2)
     pts3d = p3d_feats["keypoints"]       # (N3D, 3)
@@ -83,8 +86,9 @@ def compute_ground_truth_matches(
     N2D = kpts2d.shape[0]
     N3D = pts3d.shape[0]
 
-    matches0 = -np.ones(N2D, dtype=int)
-    matches1 = -np.ones(N3D, dtype=int)
+    # Initialize with -1
+    matches0 = torch.full((N2D,), UNMATCHED_FEATURE, dtype=torch.long)
+    matches1 = torch.full((N3D,), UNMATCHED_FEATURE, dtype=torch.long)
 
     if N3D == 0:
         return matches0, matches1
@@ -99,69 +103,90 @@ def compute_ground_truth_matches(
     width = camera["intrinsics"]["width"]
     height = camera["intrinsics"]["height"]
 
-    # project all 3D points
-    X = pts3d.T  # (3, N3D)
-
-    X_cam = R @ X + t  # (3, N3D)
-
-    z = X_cam[2]
-    valid = z > 0 # check depth > 0
-
-    X_cam = X_cam[:, valid]
-    z = z[valid]
-
-    u = fx * (X_cam[0] / z) + cx
-    v = fy * (X_cam[1] / z) + cy
-
-    valid_proj = (
-        (u >= 0) & (u < width) &
-        (v >= 0) & (v < height)
-    )
-
-    u = u[valid_proj]
-    v = v[valid_proj]
-    z = z[valid_proj]
-
-    valid_indices = np.where(valid)[0][valid_proj]
-
-    # check depth consistency
-    if depth_map is not None:
-
-        depth_real = sample_depth_bilinear(depth_map, u, v)
-        valid_depth = depth_real > 0
-        rel_error = np.full_like(depth_real, np.inf)
-        rel_error[valid_depth] = (
-            np.abs(z[valid_depth] - depth_real[valid_depth])
-            / depth_real[valid_depth]
-        ).flatten()
-
-        depth_mask = (rel_error <= depth_rel_thresh)
-
-        u = u[depth_mask]
-        v = v[depth_mask]
-        z = z[depth_mask]
-        valid_indices = valid_indices[depth_mask]
-
-    projected = np.stack([u.flatten(), v.flatten()], axis=1)
-
-    tree = cKDTree(kpts2d)
+    # Vectorized 3D projection
+    X = pts3d.T # (3, N3D)
+    X_cam = R @ X + t # (3, N3D)
         
-    # Query the tree for the nearest 2D keypoint to each projected 3D point
-    # distance_upper_bound acts as an instant cutoff mask (reproj_thresh)
-    dists, min_indices = tree.query(projected, distance_upper_bound=reproj_thresh)
-    
-    sort_idx = np.argsort(dists)
-    
-    for i in sort_idx: # always first process the closest ones
-        min_idx = min_indices[i] 
-        idx3d = valid_indices[i]
-        # cKDTree returns len(kpts2d) if no neighbor was found within the threshold
-        if min_idx < N2D:
-            if matches0[min_idx] == -1:
-                matches0[min_idx] = idx3d
-                matches1[idx3d] = min_idx
+    z = X_cam[2, :]
+    valid_z = z > 0
+    valid_z = torch.as_tensor(valid_z).bool() 
+    z = torch.as_tensor(z).float()
+    # Avoid division by zero for invalid z
+    z_safe = torch.where(valid_z, z, torch.ones_like(z))
+        
+    u = fx * (X_cam[0, :] / z_safe) + cx
+    v = fy * (X_cam[1, :] / z_safe) + cy
 
-    return matches0, matches1
+    valid_proj = valid_z & (u >= 0) & (u < width) & (v >= 0) & (v < height)
+
+    # Depth check arrays
+    has_valid_depth = torch.zeros(N3D, dtype=torch.bool)
+    rel_error = torch.full((N3D,), float('inf'))
+
+    if depth_map is not None:
+        # Only sample depth for points that landed inside the image bounds
+        u_np, v_np = u[valid_proj].numpy(), v[valid_proj].numpy()
+            
+        if len(u_np) > 0:
+            depth_real = sample_depth_bilinear(depth_map, u_np, v_np)
+            depth_real_t = torch.as_tensor(depth_real).float().view(-1)
+            # depth_real_t = torch.from_numpy(depth_real).float()
+                
+            valid_d = depth_real_t > 0
+                
+            z_valid = z[valid_proj]
+            rel_err_valid = torch.full_like(depth_real_t, float('inf'))
+            rel_err_valid[valid_d] = torch.abs(z_valid[valid_d] - depth_real_t[valid_d]) / depth_real_t[valid_d]
+                
+            # Scatter back to the original N3D sized arrays
+            rel_error[valid_proj] = rel_err_valid
+            has_valid_depth[valid_proj] = valid_d
+            # Filter the points that have depth but bigger than neg_thresh
+            depth_is_totally_wrong = has_valid_depth & (rel_error > neg_depth_thresh)
+            valid_proj &= (~depth_is_totally_wrong)
+
+    # Combine u,v into (N3D, 2)
+    projected = torch.stack([u, v], dim=1)
+    projected = torch.as_tensor(projected).float().contiguous()
+    kpts2d = torch.as_tensor(kpts2d).float().contiguous()    
+    # Vectorized Distance Matrix Calculation
+    dist_matrix = torch.cdist(projected.unsqueeze(0), kpts2d.unsqueeze(0)).squeeze(0) # -> (N3D, N2D)
+        
+    # Mask out points that projected behind the camera or off-screen
+    dist_matrix[~valid_proj] = float('inf')
+
+    # Prepare for MNN assignment
+    min_dist_3d_indices_for_2d = torch.argmin(dist_matrix, dim=0)
+    min_dist_2d_indices_for_3d = torch.argmin(dist_matrix, dim=1)
+    has_dist_mask = dist_matrix <= neg_reproj_thresh
+    valid_2d_indices = torch.where(has_dist_mask)[1].unique()
+        
+    for idx2d in valid_2d_indices: # loop over valid 2d kpts
+        # first assign all the existing mathes < neg_reproj_thresh as IGNORED
+        has_dist_3d_idx = torch.where(has_dist_mask[:, idx2d])[0]
+        if matches0[idx2d] == UNMATCHED_FEATURE:
+            matches0[idx2d] = IGNORE_FEATURE
+        for id in has_dist_3d_idx:
+            if matches1[id] == UNMATCHED_FEATURE:
+                matches1[id] = IGNORE_FEATURE
+        min_dist_3d_idx = min_dist_3d_indices_for_2d[idx2d]
+        is_mutual = (min_dist_2d_indices_for_3d[min_dist_3d_idx] == idx2d)
+        if is_mutual:
+        # If mutual nearest neighbours, check if assigned as STRICT
+            cur_min_dist = dist_matrix[min_dist_3d_idx, idx2d]
+            r_err = rel_error[min_dist_3d_idx]
+            valid_d = has_valid_depth[min_dist_3d_idx]
+            if valid_d: # if has depth
+                if cur_min_dist <= pos_reproj_thresh and r_err <= pos_depth_thresh:
+                    if (matches0[idx2d] in [UNMATCHED_FEATURE, IGNORE_FEATURE]) and \
+                        (matches1[min_dist_3d_idx] in [UNMATCHED_FEATURE, IGNORE_FEATURE]):
+                        matches0[idx2d] = min_dist_3d_idx
+                        matches1[min_dist_3d_idx] = idx2d
+            else: # if no depth provided
+                if matches1[min_dist_3d_idx] == UNMATCHED_FEATURE:
+                    matches1[min_dist_3d_idx] = IGNORE_FEATURE
+
+    return matches0.numpy(), matches1.numpy()
 
 def load_depth(depth_path):
     with h5py.File(depth_path, 'r') as f:
@@ -169,7 +194,8 @@ def load_depth(depth_path):
     return depth
 
 def generate_gt_for_query_list(
-        query_list, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path, reproj_thresh=3.0, depth_rel_thresh=0.1
+        query_list, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path, 
+        pos_reproj_thresh=3.0, pos_depth_thresh=0.1, neg_reproj_thresh=8.0, neg_depth_thresh=0.25
         ):
     # extract SP keypoints descriptors of all the queries in one scene
     all_query_feats = {}
@@ -228,7 +254,8 @@ def generate_gt_for_query_list(
         # reproject points3d to get GT
         depth_map = load_depth(depth_path / f"{Path(query).stem}.h5")
         matches0, matches1 = compute_ground_truth_matches(
-            query_feats, current_p3d_feats, camera, depth_map, reproj_thresh, depth_rel_thresh
+            query_feats, current_p3d_feats, camera, depth_map, 
+            pos_reproj_thresh, pos_depth_thresh, neg_reproj_thresh, neg_depth_thresh
         )
         # TODO: Wash data here, only keep matches > 0
         
@@ -245,11 +272,14 @@ def generate_gt_for_query_list(
 
 if __name__ == "__main__":
 
-    reproj_thresh=5.0
-    depth_rel_thresh=0.1
+    pos_reproj_thresh=3.0
+    neg_reproj_thresh=8.0
+    pos_depth_thresh=0.1
+    neg_depth_thresh=0.25
     output_dir = Path("/proj/vlarsson/outputs")
     scene_lst_path = output_dir / "splits"
-    file_path = "/home/x_jiagu/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean.txt"
+    file_path = scene_lst_path / "full_scenes.txt" 
+    # file_path = "/home/x_jiagu/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean.txt"
     with open(file_path,'r')as f:
         scene_names=[item.strip() for item in f.readlines()]
     # scene_names = [] 
@@ -263,7 +293,8 @@ if __name__ == "__main__":
     #     for name in f.readlines():
     #         scene_names.append(name.strip())
     all_ratios = []
-    for scene in scene_names[94:]:
+    match_2d, match_3d, ignore_2d, ignore_3d, unmatch_2d, unmatch_3d = [],[],[],[],[],[]
+    for scene in tqdm(scene_names[155:]):
         scene_gt_data = {}
         query_path = output_dir / "query_sets" / scene
         query_names = query_path / "query_image_names.txt"
@@ -289,7 +320,8 @@ if __name__ == "__main__":
         print(f"Processing Scene {scene}")
 
         scene_gt_data = generate_gt_for_query_list(
-                query_list, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path, reproj_thresh, depth_rel_thresh
+                query_list, feats_2d_path, feats_3d_path, query_cams, covisibility_dict, depth_path, 
+                pos_reproj_thresh, pos_depth_thresh, neg_reproj_thresh, neg_depth_thresh
                 )
         
         # # Save the gt_data
@@ -304,36 +336,54 @@ if __name__ == "__main__":
         # gc.collect() 
         # print(f"Scene {scene} saved and memory cleared.")
         
-        # Below is for clean query list generation
+        # -----Below is for clean query list generation-----
         query_lst_clean = []
         for query in query_list:
             matches = scene_gt_data[query]["matches0"]
-            num_matches0 = np.sum(matches != -1)
+            num_matches0 = np.sum(matches > -1)
             ratio = num_matches0 / np.shape(matches)[0]
-            if ratio >= 0.1:
+            if  num_matches0 > 0: #ratio >= 0.1:
                 query_lst_clean.append(query)
         print(f"{len(query_list)} queries in total originally.")
-        print(f"{len(query_lst_clean)} queries that have over 10% GT collected.")
-        with open(query_path / "query_image_names_clean.txt", "w") as f:
+        print(f"{len(query_lst_clean)} queries that have GT matches collected.")
+        # print(f"{len(query_lst_clean)} queries that have over 10% GT collected.")
+        with open(query_path / "query_image_names_0_100.txt", "w") as f:
             for query_clean in query_lst_clean:
                 f.write(f"{query_clean}\n")
 
-        print(f"Clean query name saved to {query_path}  / query_image_names_clean.txt")
+        print(f"Clean query name saved to {query_path}  / query_image_names_0_100.txt")
 
         # Below is to compute the distribution of matchable GT pairs
         # query_50_100 = []
+        
         # for query in query_list:
         #     matches = scene_gt_data[query]["matches0"]
-        #     num_matches0 = np.sum(matches != -1)
-        #     ratio = num_matches0 / np.shape(matches)[0]
-        #     all_ratios.append(ratio)
-        #     if ratio >= 0.5:
-        #         query_50_100.append(query)
+        #     num_matches0 = np.sum(matches >= 0)
+        #     num_unmatch_2d = np.sum(matches == -1)
+        #     num_ignore_2d = np.sum(matches == -2)
+
+        #     matches_3d = scene_gt_data[query]["matches1"]
+        #     num_matches1 = np.sum(matches_3d >= 0)
+        #     num_unmatch_3d = np.sum(matches_3d == -1)
+        #     num_ignore_3d = np.sum(matches_3d == -2)
+
+        #     match_2d.append(num_matches0)
+        #     match_3d.append(num_matches1)
+        #     ignore_2d.append(num_ignore_2d)
+        #     ignore_3d.append(num_ignore_3d)
+        #     unmatch_2d.append(num_unmatch_2d)
+        #     unmatch_3d.append(num_unmatch_3d)
+
+            # ratio = num_matches0 / np.shape(matches)[0]
+            # all_ratios.append(ratio)
+            # if ratio >= 0.5:
+            #     query_50_100.append(query)
         # print(f"{len(query_list)} queries in total originally.")
         # print(f"{len(query_50_100)} queries that have over 50% overlap ratio collected.")
         # with open(query_path / "query_image_names_50_100.txt", "w") as f:
         #     for q in query_50_100:
         #         f.write(f"{q}\n")
+        
         
     # plt.figure(figsize=(10, 6))
     # bins = np.arange(0, 1.1, 0.1) 
@@ -351,6 +401,14 @@ if __name__ == "__main__":
 
     # print(f"Total queries processed: {len(all_ratios)}")
     # print(f"Average ratio: {np.mean(all_ratios):.4f}")
+
+    # print(f"Number of processed queries: {len(match_2d)}")
+    # print(f"Average number of matched 2D keypoints: {np.mean(match_2d):2f}")
+    # print(f"Average number of matched 3D keypoints: {np.mean(match_3d):2f}")
+    # print(f"Average number of ignored 2D keypoints: {np.mean(ignore_2d):2f}")
+    # print(f"Average number of ignored 3D keypoints: {np.mean(ignore_3d):2f}")
+    # print(f"Average number of unmatchable 2D keypoints: {np.mean(unmatch_2d):2f}")
+    # print(f"Average number of unmatchable 3D keypoints: {np.mean(unmatch_3d):2f}")
 
 
 

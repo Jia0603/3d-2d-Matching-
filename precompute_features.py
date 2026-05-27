@@ -1,4 +1,5 @@
 import h5py
+import random
 from pathlib import Path
 import numpy as np
 from tqdm import tqdm
@@ -6,7 +7,7 @@ from hloc.utils import read_write_model as rw
 from collections import defaultdict
 import os
 
-def extract_3d_descriptors(points3D, images, h5_path):
+def extract_3d_descriptors(points3D, images, h5_path, random_sample=True):
     """
     Compute the averaged features for 3D points
     Returns: { p3d_id: {'descriptors': ..., 'keypoints': ..., 'scores': ...} }
@@ -15,9 +16,21 @@ def extract_3d_descriptors(points3D, images, h5_path):
     image_to_obs = defaultdict(list)
 
     for p3d_id, p3d_obj in points3D.items():
+        all_obs = []
         for img_id, p2d_idx in zip(p3d_obj.image_ids, p3d_obj.point2D_idxs):
             if img_id in images:
-                image_to_obs[img_id].append((p3d_id, p2d_idx))
+                all_obs.append((img_id, p2d_idx))
+                # image_to_obs[img_id].append((p3d_id, p2d_idx))
+        track_len = len(all_obs)
+        if random_sample and track_len >= 2:
+            k = random.randint(2, track_len)
+            sampled_obs = random.sample(all_obs, k)
+
+        else:
+            sampled_obs = all_obs
+
+        for img_id, p2d_idx in sampled_obs:
+            image_to_obs[img_id].append((p3d_id, p2d_idx))
 
     p3d_feature_dict = defaultdict(lambda: {
         "descriptors": [],
@@ -83,12 +96,12 @@ if __name__ == "__main__":
     outputs = Path("/proj/vlarsson/outputs/")
     # root = Path("/proj/vlarsson/outputs_cambridge/sfm/")
     # outputs = Path("/proj/vlarsson/outputs_cambridge")
-    # file_path = "/home/x_jiagu/glue-factory/gluefactory/datasets/megadepth_scene_lists/train_scenes_clean.txt"
-    # with open(file_path,'r')as f:
-    #     scene_names=[item.strip() for item in f.readlines()]
-    scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
+    file_path = Path("/proj/vlarsson/outputs/splits/full_scenes.txt")
+    with open(file_path,'r')as f:
+        scene_names=[item.strip() for item in f.readlines()]
+    # scene_names = sorted([p.name for p in root.iterdir() if p.is_dir()])
 
-    for scene in ["1589"]: #scene_names:
+    for scene in scene_names: #scene_names:
 
         print(f"Start averaged feature computation for scene {scene}...")
         sfm_dir = outputs / "sfm" / scene / "sfm_superpoint+lightglue"
@@ -97,11 +110,11 @@ if __name__ == "__main__":
 
         _, images, points3D = rw.read_model(sfm_dir, ext=".bin")
         h5_path = sfm_dir.parent / "feats-superpoint-n2048.h5"
-        p3d_feats = extract_3d_descriptors(points3D, images, h5_path)
+        p3d_feats = extract_3d_descriptors(points3D, images, h5_path, True)
         print(f"Extracted features for {len(p3d_feats)} 3D points.")
         # print one example
         # keys = [key for key in p3d_feats.keys()]
         # print(p3d_feats[keys[0]])
-        cached_feats_path = output_dir / "points3D_feats_cache.h5"
+        cached_feats_path = output_dir / "points3D_feats_cache_sampled.h5"
         save_3d_features_to_h5(p3d_feats, cached_feats_path)
         print(f"Averaged feature for scene {scene} saved to {cached_feats_path}.")

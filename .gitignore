@@ -14,5 +14,6 @@ count_depth_num.py
 
 # ignore generated images
 *.png
+*.jpg
 /__pycache__/
 */__pycache__

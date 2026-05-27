@@ -9,7 +9,45 @@ from pathlib import Path
 from PIL import Image
 
 pio.renderers.default = "vscode"
+def visualize_reconstruction_custom(reconstruction, name="Reconstruction"):
+    # 1. 提取点云数据 (XYZ 和 RGB)
+    # 假设 reconstruction 是 colmap 数据结构或类似对象
+    points = reconstruction.points3D
+    xyz = np.array([p.xyz for p in points.values()])
+    rgb = np.array([p.color for p in points.values()])
 
+    # 2. 创建 Plotly 的散点图层 (Scatter3d)
+    # 我们只画点，不画相机
+    trace = go.Scatter3d(
+        x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2],
+        mode='markers',
+        name=name,
+        marker=dict(
+            size=1.5,  # 点的大小
+            # 将 RGB [0-255] 转换为 Plotly 要求的格式
+            color=[f'rgb({r},{g},{b})' for r, g, b in rgb],
+            opacity=0.8
+        )
+    )
+
+    # 3. 初始化并组装 Figure
+    fig = go.Figure(data=[trace])
+    fig.update_layout(
+        scene=dict(
+            # --- 解决变形的关键 ---
+            aspectmode='data', 
+            # ---------------------
+            xaxis_visible=False,
+            yaxis_visible=False,
+            zaxis_visible=False,
+            bgcolor='white'
+        ),
+        paper_bgcolor='white',
+        margin=dict(l=0, r=0, b=0, t=0),
+        showlegend=False
+    )
+    
+    return fig
 def visualize_sfm_3d(sfm_dir: Path, scene: str, html_dir: Path, save_html: bool = True):
     '''
     Visualizes the 3D reconstruction of a given scene using pycolmap and hloc's viz_3d.
@@ -35,10 +73,11 @@ def visualize_sfm_3d(sfm_dir: Path, scene: str, html_dir: Path, save_html: bool 
         #     print(f"PLY model for scene {scene} already exists.")
 
     fig = viz_3d.init_figure()
-    viz_3d.plot_reconstruction(
-        fig, reconstruction, color='rgba(255,0,0,0.5)', name=f"triangulation of scene {scene}"
-        )
-    # fig.show()
+    # viz_3d.plot_reconstruction(
+    #     fig, reconstruction, color='rgba(255,0,0,0.5)', name=f"triangulation of scene {scene}"
+    #     )
+    # # fig.show()
+    fig = visualize_reconstruction_custom(reconstruction, name=f"Scene {scene}")
 
     if save_html:
         html_path = html_dir / f"viz_{scene}.html"
